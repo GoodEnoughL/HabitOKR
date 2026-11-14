@@ -27,6 +27,33 @@ export const accentPalette = [
   '#00C7BE',
 ];
 
+/**
+ * 目标色板（图片 3）：10 个颜色，从红（10）到蓝（1）。
+ * index 0 对应数字 10（红），index 9 对应数字 1（蓝）。
+ * 用于目标颜色（图片 2 名称右侧圆点、图片 1 进度条）以及分类颜色。
+ */
+export const goalColorPalette = [
+  '#E5484D', // 10 红
+  '#F76B5C', // 9
+  '#FF8A3D', // 8 橙
+  '#FFA94D', // 7
+  '#FFD43B', // 6 黄
+  '#C5D83C', // 5
+  '#6BCB77', // 4 绿
+  '#3ECF8E', // 3
+  '#2EC4B6', // 2 青
+  '#3B82F6', // 1 蓝
+];
+
+/** 由颜色取其在色板中的序号 1-10，找不到返回 10 */
+export function paletteNumber(color: string): number {
+  const i = goalColorPalette.indexOf(color);
+  return i === -1 ? 10 : 10 - i;
+}
+
+/** 目标默认颜色（绿，对应图片 2 名称旁的绿色圆点） */
+export const defaultGoalColor = goalColorPalette[6];
+
 export const spacing = {
   xs: 4,
   sm: 8,

@@ -1,11 +1,20 @@
 import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Emoji } from '../../components/Emoji';
 import { ProgressBar } from '../../components/ProgressBar';
 import { useStore } from '../../store/useStore';
 import { colors, font, radius, spacing } from '../../theme';
 import { getWeekDates, toKey, todayKey, WEEKDAY_NAMES, parseKey } from '../../utils/date';
-import { getDailyCheckInCounts, getStreak, goalProgress, taskProgress } from '../../utils/task';
+import {
+  getCompletedDays,
+  getDailyCheckInCounts,
+  getDayTaskStates,
+  getStreak,
+  getTotalCheckIns,
+  goalProgress,
+  taskProgress,
+} from '../../utils/task';
 
 export default function SummaryScreen() {
   const { goals, tasks, checkIns } = useStore();
@@ -15,17 +24,8 @@ export default function SummaryScreen() {
   const maxCount = Math.max(1, ...week.map((w) => w.count));
 
   const todayStates = useMemo(() => {
-    const key = todayKey();
-    const scheduled = tasks.filter((t) => {
-      // 复用 daily/weekly 规则
-      const d = parseKey(key);
-      const weekday = d.getDay() === 0 ? 7 : d.getDay();
-      if (key < t.startDate) return false;
-      if (t.endDate && key > t.endDate) return false;
-      return t.repeat === 'daily' || t.weekDays.includes(weekday);
-    });
-    const done = scheduled.filter((t) => checkIns.some((c) => c.taskId === t.id && c.date === key));
-    return { total: scheduled.length, done: done.length };
+    const states = getDayTaskStates(tasks, checkIns, todayKey());
+    return { total: states.length, done: states.filter((s) => s.done).length };
   }, [tasks, checkIns]);
 
   const todayRate = todayStates.total > 0 ? todayStates.done / todayStates.total : 0;
@@ -92,7 +92,7 @@ export default function SummaryScreen() {
             const p = goalProgress(g);
             return (
               <View key={g.id} style={styles.progressRow}>
-                <Text style={{ fontSize: 18 }}>{g.emoji}</Text>
+                <View style={[styles.goalDot, { backgroundColor: g.color }]} />
                 <Text style={styles.progressTitle} numberOfLines={1}>
                   {g.name}
                 </Text>
@@ -108,18 +108,22 @@ export default function SummaryScreen() {
         <View style={styles.card}>
           <Text style={font.h3}>习惯坚持</Text>
           {tasks.map((t) => {
-            const p = taskProgress(t);
+            const p = taskProgress(t, checkIns);
+            const detail =
+              t.completionMode === 'timeSpan'
+                ? `${getCompletedDays(t, checkIns)}/${t.completionValue} 天`
+                : t.completionMode === 'totalCount'
+                  ? `${getTotalCheckIns(t, checkIns)}/${t.completionValue} 次`
+                  : `已坚持 ${getCompletedDays(t, checkIns)} 天`;
             return (
               <View key={t.id} style={styles.progressRow}>
-                <Text style={{ fontSize: 18 }}>{t.emoji}</Text>
+                <Emoji char={t.emoji} size={18} />
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                     <Text style={styles.progressTitle} numberOfLines={1}>
                       {t.title}
                     </Text>
-                    <Text style={font.caption}>
-                      {t.doneCount}/{t.totalCount} 次
-                    </Text>
+                    <Text style={font.caption}>{detail}</Text>
                   </View>
                   <View style={{ marginTop: 6 }}>
                     <ProgressBar progress={p} color={t.color} />
@@ -128,7 +132,7 @@ export default function SummaryScreen() {
               </View>
             );
           })}
-          {tasks.length === 0 && <Text style={[font.caption, { marginTop: spacing.sm }]}>暂无任务</Text>}
+          {tasks.length === 0 && <Text style={[font.caption, { marginTop: spacing.sm }]}>暂无习惯</Text>}
         </View>
 
         <Text style={styles.weekHint}>
@@ -161,6 +165,7 @@ const styles = StyleSheet.create({
   bar: { width: 18, borderRadius: 6, backgroundColor: colors.primaryLight },
   barLabel: { fontSize: 11, color: colors.textTertiary, marginTop: 6 },
   progressRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md },
+  goalDot: { width: 10, height: 10, borderRadius: 5 },
   progressTitle: { flex: 1, fontSize: 14, color: colors.text },
   progressPct: { width: 42, fontSize: 13, fontWeight: '600', textAlign: 'right' },
   weekHint: { ...font.tiny, textAlign: 'center', marginTop: spacing.lg },

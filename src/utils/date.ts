@@ -48,6 +48,18 @@ export function formatCN(key: string): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
+/** '2026/11/14'（图片 1 目标卡日期、图片 4 结束重复） */
+export function formatSlash(key: string): string {
+  const d = parseKey(key);
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
+}
+
+/** '2026年11月14日'（图片 4 任务时间） */
+export function formatFullCN(key: string): string {
+  const d = parseKey(key);
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
 export function weekdayCN(key: string): string {
   return WEEKDAY_NAMES[weekDayIndex(parseKey(key)) - 1];
 }
@@ -57,6 +69,21 @@ export function getMonthMatrix(year: number, month: number): (string | null)[][]
   const first = new Date(year, month, 1);
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const offset = weekDayIndex(first) - 1;
+  const cells: (string | null)[] = [
+    ...Array.from({ length: offset }, () => null),
+    ...Array.from({ length: daysInMonth }, (_, i) => toKey(new Date(year, month, i + 1))),
+  ];
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks: (string | null)[][] = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
+}
+
+/** 构建月视图矩阵（周日开始，详情页日历用），每行一周，空白为 null */
+export function getMonthMatrixSun(year: number, month: number): (string | null)[][] {
+  const first = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const offset = first.getDay(); // 周日 = 0
   const cells: (string | null)[] = [
     ...Array.from({ length: offset }, () => null),
     ...Array.from({ length: daysInMonth }, (_, i) => toKey(new Date(year, month, i + 1))),

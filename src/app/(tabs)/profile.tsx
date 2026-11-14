@@ -1,16 +1,82 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { router } from 'expo-router';
+import * as Sharing from 'expo-sharing';
 import React from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useStore } from '../../store/useStore';
 import { colors, font, radius, spacing } from '../../theme';
+import { backupFileName, buildBackupJSON } from '../../utils/backup';
 
 export default function ProfileScreen() {
   const { goals, tasks, checkIns, resetToSeed, clearAll } = useStore();
 
+  const handleExport = async () => {
+    try {
+      const { categories, goals: g, tasks: t, checkIns: c } = useStore.getState();
+      const json = buildBackupJSON({ categories, goals: g, tasks: t, checkIns: c });
+      const uri = FileSystem.cacheDirectory + backupFileName();
+      await FileSystem.writeAsStringAsync(uri, json, { encoding: FileSystem.EncodingType.UTF8 });
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert('无法分享', '当前设备不支持文件分享');
+        return;
+      }
+      await Sharing.shareAsync(uri, {
+        mimeType: 'application/json',
+        dialogTitle: '导出 HabitOKR 数据备份',
+        UTI: 'public.json',
+      });
+    } catch (e) {
+      Alert.alert('导出失败', String(e));
+    }
+  };
+
+  const doImport = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/json',
+        copyToCacheDirectory: true,
+      });
+      if ((result as any).canceled) return;
+      const uri: string | undefined = (result as any).assets?.[0]?.uri ?? (result as any).uri;
+      if (!uri) {
+        Alert.alert('导入失败', '未选择文件');
+        return;
+      }
+      const text = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+      const ok = useStore.getState().importData(text);
+      if (ok) {
+        const s = useStore.getState();
+        Alert.alert(
+          '导入成功',
+          `已恢复：${s.goals.length} 个目标、${s.tasks.length} 个习惯、${s.checkIns.length} 条打卡`
+        );
+      } else {
+        Alert.alert('导入失败', '无法识别备份文件，请确认是 HabitOKR 导出的 JSON 文件');
+      }
+    } catch (e) {
+      Alert.alert('导入失败', String(e));
+    }
+  };
+
+  const handleImport = () =>
+    Alert.alert(
+      '导入备份',
+      '导入将覆盖当前所有数据（目标、习惯、打卡记录），且不可撤销。建议先导出当前数据备份。',
+      [
+        { text: '取消', style: 'cancel' },
+        { text: '导入', onPress: doImport },
+      ]
+    );
+
   const items: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void; danger?: boolean }[] = [
-    { icon: 'calendar-outline', label: '任务日历', onPress: () => router.push('/calendar') },
+    { icon: 'calendar-outline', label: '习惯日历', onPress: () => router.push('/calendar') },
+    { icon: 'download-outline', label: '导出数据备份', onPress: handleExport },
+    { icon: 'cloud-upload-outline', label: '导入数据备份', onPress: handleImport },
     {
       icon: 'refresh-outline',
       label: '重置为示例数据',
@@ -25,7 +91,7 @@ export default function ProfileScreen() {
       label: '清空所有数据',
       danger: true,
       onPress: () =>
-        Alert.alert('清空数据', '所有目标、任务和打卡记录都会被删除，且不可恢复。', [
+        Alert.alert('清空数据', '所有目标、习惯和打卡记录都会被删除，且不可恢复。', [
           { text: '取消', style: 'cancel' },
           { text: '清空', style: 'destructive', onPress: clearAll },
         ]),
@@ -53,7 +119,7 @@ export default function ProfileScreen() {
           <View style={styles.statsRow}>
             {[
               [goals.length, '目标'],
-              [tasks.length, '任务'],
+              [tasks.length, '习惯'],
               [checkIns.length, '打卡'],
             ].map(([num, label]) => (
               <View key={label as string} style={styles.statItem}>

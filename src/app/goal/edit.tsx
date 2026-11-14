@@ -15,36 +15,43 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { DatePickerModal } from '../../components/DatePickerModal';
 import { useStore } from '../../store/useStore';
-import { accentPalette, colors, font, radius, spacing } from '../../theme';
+import { defaultGoalColor, goalColorPalette, colors, font, radius, spacing } from '../../theme';
 import { KeyResult } from '../../types';
-import { addDays, toKey } from '../../utils/date';
+import { formatSlash } from '../../utils/date';
 import { genId } from '../../utils/task';
 
-const EMOJI_CHOICES = ['🎯', '🏋️', '📖', '🎧', '🧘', '💻', '✍️', '🏃', '💰', '🌱'];
+type Picker = 'none' | 'category' | 'color' | 'time' | 'motivation';
+
+const INFO: Record<string, string> = {
+  kr: '关键结果（Key Result）是衡量目标是否达成的可量化里程碑。\n目标是方向，关键结果是证据——每完成一项，目标进度就前进一步。',
+  weight: '开启后，可为每个关键结果设置权重（百分比）。\n权重越高，该关键结果对整体目标进度的影响越大，用于区分重要度。',
+  motivation: '动机：执行目标的动力。\n在开始前想清楚「为什么要做」，能在倦怠时给你持续的推力。',
+  feasibility: '可行性：实现目标的基础。\n梳理「凭什么能做成」——现有资源、能力、条件，让目标脚踏实地。',
+};
 
 export default function GoalEditScreen() {
-  const { id } = useLocalSearchParams<{ id?: string }>();
-  const { goals, groups, addGoal, updateGoal, removeGoal, addGroup } = useStore();
+  const { id, categoryId: initCategoryId } = useLocalSearchParams<{ id?: string; categoryId?: string }>();
+  const { goals, categories, addGoal, updateGoal, removeGoal, addCategory } = useStore();
   const editing = useMemo(() => goals.find((g) => g.id === id), [goals, id]);
 
   const [name, setName] = useState(editing?.name ?? '');
-  const [emoji, setEmoji] = useState(editing?.emoji ?? '🎯');
-  const [color, setColor] = useState(editing?.color ?? accentPalette[0]);
-  const [groupId, setGroupId] = useState<string | undefined>(editing?.groupId);
-  const [motivation, setMotivation] = useState(editing?.motivation ?? 0);
-  const [feasibility, setFeasibility] = useState(editing?.feasibility ?? 0);
+  const [color, setColor] = useState(editing?.color ?? defaultGoalColor);
+  const [categoryId, setCategoryId] = useState<string | undefined>(editing?.categoryId ?? initCategoryId);
   const [startDate, setStartDate] = useState<string | undefined>(editing?.startDate);
   const [endDate, setEndDate] = useState<string | undefined>(editing?.endDate);
   const [useWeight, setUseWeight] = useState(editing?.useWeight ?? false);
   const [keyResults, setKeyResults] = useState<KeyResult[]>(editing?.keyResults ?? []);
+  const [motivations, setMotivations] = useState<string[]>(editing?.motivations ?? []);
+  const [feasibilities, setFeasibilities] = useState<string[]>(editing?.feasibilities ?? []);
   const [newKR, setNewKR] = useState('');
   const [reorderMode, setReorderMode] = useState(false);
+  const [picker, setPicker] = useState<Picker>('none');
+  const [newCategoryName, setNewCategoryName] = useState('');
 
-  const [picker, setPicker] = useState<'none' | 'group' | 'score' | 'time'>('none');
-  const [newGroupName, setNewGroupName] = useState('');
-
-  const group = groups.find((g) => g.id === groupId);
+  const category = categories.find((c) => c.id === categoryId);
+  const mfCount = motivations.length + feasibilities.length;
 
   const save = () => {
     if (!name.trim()) {
@@ -53,11 +60,10 @@ export default function GoalEditScreen() {
     }
     const payload = {
       name: name.trim(),
-      emoji,
       color,
-      groupId,
-      motivation,
-      feasibility,
+      categoryId,
+      motivations: motivations.filter((s) => s.trim()),
+      feasibilities: feasibilities.filter((s) => s.trim()),
       startDate,
       endDate,
       useWeight,
@@ -76,10 +82,8 @@ export default function GoalEditScreen() {
     ]);
     setNewKR('');
   };
-
   const patchKR = (krId: string, patch: Partial<KeyResult>) =>
     setKeyResults((krs) => krs.map((k) => (k.id === krId ? { ...k, ...patch } : k)));
-
   const moveKR = (index: number, dir: -1 | 1) => {
     const j = index + dir;
     if (j < 0 || j >= keyResults.length) return;
@@ -88,22 +92,19 @@ export default function GoalEditScreen() {
     setKeyResults(next);
   };
 
-  const setTimePreset = (months: number | null) => {
-    if (months === null) {
-      setStartDate(undefined);
-      setEndDate(undefined);
-    } else {
-      const start = new Date();
-      setStartDate(toKey(start));
-      setEndDate(toKey(addDays(start, months * 30)));
-    }
-    setPicker('none');
-  };
+  const updateList = (
+    setter: React.Dispatch<React.SetStateAction<string[]>>,
+    index: number,
+    value: string
+  ) => setter((arr) => arr.map((s, i) => (i === index ? value : s)));
+  const removeFromList = (
+    setter: React.Dispatch<React.SetStateAction<string[]>>,
+    index: number
+  ) => setter((arr) => arr.filter((_, i) => i !== index));
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        {/* 顶部导航 */}
         <View style={styles.navBar}>
           <TouchableOpacity onPress={() => router.back()} style={styles.navBtn} hitSlop={8}>
             <Text style={styles.navBtnText}>取消</Text>
@@ -115,7 +116,7 @@ export default function GoalEditScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          {/* 目标名称 */}
+          {/* 目标名称 + 颜色圆点 */}
           <View style={styles.nameCard}>
             <TextInput
               style={styles.nameInput}
@@ -124,30 +125,20 @@ export default function GoalEditScreen() {
               value={name}
               onChangeText={setName}
             />
-            <View style={[styles.colorDot, { backgroundColor: color }]} />
-          </View>
-          <View style={styles.emojiRow}>
-            {EMOJI_CHOICES.map((e) => (
-              <TouchableOpacity key={e} onPress={() => setEmoji(e)} style={[styles.emojiCell, e === emoji && styles.emojiCellActive]}>
-                <Text style={{ fontSize: 20 }}>{e}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <View style={styles.paletteRow}>
-            {accentPalette.map((c) => (
-              <TouchableOpacity key={c} onPress={() => setColor(c)} style={[styles.paletteCell, { backgroundColor: c }, c === color && styles.paletteCellActive]} />
-            ))}
+            <TouchableOpacity onPress={() => setPicker('color')} hitSlop={8}>
+              <View style={[styles.colorDot, { backgroundColor: color }]} />
+            </TouchableOpacity>
           </View>
 
-          {/* 目标组 & 动机可行性 */}
+          {/* 分类 & 动机可行性 */}
           <View style={styles.chipsRow}>
-            <TouchableOpacity style={styles.metaChip} onPress={() => setPicker('group')}>
-              <Text style={styles.metaChipIcon}>📦</Text>
-              <Text style={styles.metaChipText}>{group ? `所属目标组 ${group.name}` : '所属目标组'}</Text>
+            <TouchableOpacity style={styles.metaChip} onPress={() => setPicker('category')}>
+              <Ionicons name="folder" size={13} color={category?.color ?? colors.textSecondary} />
+              <Text style={styles.metaChipText}>{category ? category.name : '未分类'}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.metaChip} onPress={() => setPicker('score')}>
-              <Text style={styles.metaChipIcon}>💡</Text>
-              <Text style={styles.metaChipText}>动机&可行性 ({motivation + feasibility})</Text>
+            <TouchableOpacity style={styles.metaChip} onPress={() => setPicker('motivation')}>
+              <Ionicons name="bulb-outline" size={13} color={colors.warning} />
+              <Text style={styles.metaChipText}>动机&可行性 ({mfCount})</Text>
             </TouchableOpacity>
           </View>
 
@@ -155,7 +146,7 @@ export default function GoalEditScreen() {
           <TouchableOpacity style={styles.rowCard} onPress={() => setPicker('time')}>
             <Text style={font.h3}>目标时间</Text>
             <Text style={styles.rowValue}>
-              {startDate && endDate ? `${startDate} ~ ${endDate}` : '未设置'}
+              {startDate && endDate ? `${formatSlash(startDate)} - ${formatSlash(endDate)}` : '未设置'}
             </Text>
           </TouchableOpacity>
 
@@ -164,6 +155,9 @@ export default function GoalEditScreen() {
             <View style={styles.krHeader}>
               <Ionicons name="flag" size={15} color={colors.textSecondary} />
               <Text style={[font.h3, { marginLeft: 4 }]}>关键结果</Text>
+              <TouchableOpacity onPress={() => Alert.alert('关键结果', INFO.kr)} hitSlop={8} style={{ marginLeft: 2 }}>
+                <Ionicons name="information-circle-outline" size={15} color={colors.textTertiary} />
+              </TouchableOpacity>
               <TouchableOpacity style={styles.sortBtn} onPress={() => setReorderMode((v) => !v)}>
                 <Ionicons name="swap-vertical" size={14} color={colors.primary} />
                 <Text style={styles.sortText}>{reorderMode ? '完成' : '排序'}</Text>
@@ -185,7 +179,13 @@ export default function GoalEditScreen() {
                   <View style={[styles.krDot, { backgroundColor: color }]} />
                 )}
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.krTitle}>{kr.title}</Text>
+                  <TextInput
+                    style={styles.krTitleInput}
+                    value={kr.title}
+                    onChangeText={(v) => patchKR(kr.id, { title: v })}
+                    placeholder="关键结果名称"
+                    placeholderTextColor={colors.textTertiary}
+                  />
                   <View style={styles.krMetaRow}>
                     <Text style={styles.krMetaLabel}>当前</Text>
                     <TextInput
@@ -202,7 +202,7 @@ export default function GoalEditScreen() {
                       onChangeText={(v) => patchKR(kr.id, { target: Math.max(1, Number(v) || 1) })}
                     />
                     <TextInput
-                      style={[styles.krNumInput, { width: 44 }]}
+                      style={[styles.krNumInput, { width: 48 }]}
                       placeholder="单位"
                       placeholderTextColor={colors.textTertiary}
                       value={kr.unit}
@@ -227,7 +227,6 @@ export default function GoalEditScreen() {
               </View>
             ))}
 
-            {/* 添加关键结果 */}
             <View style={styles.addKRRow}>
               <TextInput
                 style={styles.addKRInput}
@@ -244,10 +243,15 @@ export default function GoalEditScreen() {
             </View>
           </View>
 
-          {/* 权重开关 */}
+          {/* 权重 */}
           <View style={styles.weightCard}>
             <View style={styles.weightHeader}>
-              <Text style={font.h3}>权重</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Text style={font.h3}>权重</Text>
+                <TouchableOpacity onPress={() => Alert.alert('权重', INFO.weight)} hitSlop={8}>
+                  <Ionicons name="information-circle-outline" size={15} color={colors.textTertiary} />
+                </TouchableOpacity>
+              </View>
               <Switch value={useWeight} onValueChange={setUseWeight} trackColor={{ true: colors.primary }} />
             </View>
             <Text style={font.caption}>每个关键结果对目标有不同的重要度</Text>
@@ -257,7 +261,7 @@ export default function GoalEditScreen() {
             <TouchableOpacity
               style={styles.deleteBtn}
               onPress={() =>
-                Alert.alert('删除目标', '删除后相关任务将解除关联，确定删除？', [
+                Alert.alert('删除目标', '删除后相关习惯将解除关联，确定删除？', [
                   { text: '取消', style: 'cancel' },
                   {
                     text: '删除',
@@ -276,48 +280,56 @@ export default function GoalEditScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* 目标组选择 */}
-      <Modal visible={picker === 'group'} transparent animationType="fade" onRequestClose={() => setPicker('none')}>
-        <TouchableOpacity style={styles.modalMask} activeOpacity={1} onPress={() => setPicker('none')}>
-          <View style={styles.modalCard}>
-            <Text style={[font.h3, { marginBottom: spacing.md }]}>选择目标组</Text>
-            {groups.map((g) => (
+      {/* 分类选择 */}
+      <Modal visible={picker === 'category'} transparent animationType="fade" onRequestClose={() => setPicker('none')}>
+        <TouchableOpacity style={styles.mask} activeOpacity={1} onPress={() => setPicker('none')}>
+          <View style={styles.modalCard} onStartShouldSetResponder={() => true}>
+            <Text style={[font.h3, { marginBottom: spacing.md }]}>选择分类</Text>
+            {categories.map((c) => (
               <TouchableOpacity
-                key={g.id}
+                key={c.id}
                 style={styles.modalRow}
                 onPress={() => {
-                  setGroupId(g.id);
+                  setCategoryId(c.id);
                   setPicker('none');
                 }}
               >
-                <View style={[styles.colorDot, { backgroundColor: g.color, width: 12, height: 12 }]} />
-                <Text style={font.body}>{g.name}</Text>
-                {g.id === groupId && <Ionicons name="checkmark" size={18} color={colors.primary} style={{ marginLeft: 'auto' }} />}
+                <View style={[styles.dot, { backgroundColor: c.color }]} />
+                <Text style={font.body}>{c.name}</Text>
+                {c.id === categoryId && <Ionicons name="checkmark" size={18} color={colors.primary} style={{ marginLeft: 'auto' }} />}
               </TouchableOpacity>
             ))}
             <TouchableOpacity
               style={styles.modalRow}
               onPress={() => {
-                setGroupId(undefined);
+                setCategoryId(undefined);
                 setPicker('none');
               }}
             >
-              <Text style={[font.body, { color: colors.textSecondary }]}>不设置目标组</Text>
+              <Text style={[font.body, { color: colors.textSecondary }]}>不设置分类</Text>
             </TouchableOpacity>
-            <View style={styles.newGroupRow}>
+            <View style={styles.newRow}>
               <TextInput
-                style={styles.newGroupInput}
-                placeholder="新建目标组"
+                style={styles.newInput}
+                placeholder="新建分类"
                 placeholderTextColor={colors.textTertiary}
-                value={newGroupName}
-                onChangeText={setNewGroupName}
+                value={newCategoryName}
+                onChangeText={setNewCategoryName}
+                onSubmitEditing={() => {
+                  if (!newCategoryName.trim()) return;
+                  const cid = addCategory(newCategoryName.trim(), goalColorPalette[categories.length % goalColorPalette.length]);
+                  setCategoryId(cid);
+                  setNewCategoryName('');
+                  setPicker('none');
+                }}
+                returnKeyType="done"
               />
               <TouchableOpacity
                 onPress={() => {
-                  if (!newGroupName.trim()) return;
-                  const gid = addGroup(newGroupName.trim(), accentPalette[groups.length % accentPalette.length]);
-                  setGroupId(gid);
-                  setNewGroupName('');
+                  if (!newCategoryName.trim()) return;
+                  const cid = addCategory(newCategoryName.trim(), goalColorPalette[categories.length % goalColorPalette.length]);
+                  setCategoryId(cid);
+                  setNewCategoryName('');
                   setPicker('none');
                 }}
               >
@@ -328,52 +340,116 @@ export default function GoalEditScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* 动机 & 可行性评分 */}
-      <Modal visible={picker === 'score'} transparent animationType="fade" onRequestClose={() => setPicker('none')}>
-        <TouchableOpacity style={styles.modalMask} activeOpacity={1} onPress={() => setPicker('none')}>
-          <View style={styles.modalCard}>
-            {([
-              ['动机', motivation, setMotivation],
-              ['可行性', feasibility, setFeasibility],
-            ] as const).map(([label, value, setter]) => (
-              <View key={label} style={styles.scoreRow}>
-                <Text style={font.h3}>{label}</Text>
-                <View style={{ flexDirection: 'row', gap: 6 }}>
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <TouchableOpacity key={n} onPress={() => setter(n === value ? 0 : n)}>
-                      <Ionicons name={n <= value ? 'star' : 'star-outline'} size={26} color={colors.warning} />
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            ))}
-            <TouchableOpacity style={styles.modalDone} onPress={() => setPicker('none')}>
-              <Text style={{ color: '#fff', fontWeight: '600' }}>完成</Text>
-            </TouchableOpacity>
+      {/* 颜色色板（图片 3） */}
+      <Modal visible={picker === 'color'} transparent animationType="fade" onRequestClose={() => setPicker('none')}>
+        <TouchableOpacity style={styles.mask} activeOpacity={1} onPress={() => setPicker('none')}>
+          <View style={[styles.modalCard, { paddingVertical: spacing.md }]} onStartShouldSetResponder={() => true}>
+            {goalColorPalette.map((c, i) => {
+              const num = 10 - i;
+              const selected = c === color;
+              return (
+                <TouchableOpacity
+                  key={c}
+                  style={styles.colorRow}
+                  onPress={() => {
+                    setColor(c);
+                    setPicker('none');
+                  }}
+                >
+                  <View style={[styles.colorBadge, { backgroundColor: c }]}>
+                    <Text style={styles.colorBadgeNum}>{num}</Text>
+                  </View>
+                  <Text style={[styles.colorRowNum, selected && { color: c, fontWeight: '700' }]}>{num}</Text>
+                  {selected && <Ionicons name="checkmark" size={18} color={c} style={{ marginLeft: 'auto' }} />}
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </TouchableOpacity>
       </Modal>
 
       {/* 目标时间 */}
-      <Modal visible={picker === 'time'} transparent animationType="fade" onRequestClose={() => setPicker('none')}>
-        <TouchableOpacity style={styles.modalMask} activeOpacity={1} onPress={() => setPicker('none')}>
-          <View style={styles.modalCard}>
-            <Text style={[font.h3, { marginBottom: spacing.md }]}>目标周期</Text>
-            {[
-              ['一个月', 1],
-              ['三个月', 3],
-              ['半年', 6],
-              ['一年', 12],
-            ].map(([label, months]) => (
-              <TouchableOpacity key={label as string} style={styles.modalRow} onPress={() => setTimePreset(months as number)}>
-                <Text style={font.body}>{label}</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity style={styles.modalRow} onPress={() => setTimePreset(null)}>
-              <Text style={[font.body, { color: colors.danger }]}>清除时间</Text>
+      <DatePickerModal
+        visible={picker === 'time'}
+        mode="range"
+        value={startDate}
+        endValue={endDate}
+        title="目标时间"
+        onClose={() => setPicker('none')}
+        onConfirm={(s, e) => {
+          setStartDate(s);
+          setEndDate(e);
+          setPicker('none');
+        }}
+      />
+
+      {/* 动机 & 可行性（图片 5） */}
+      <Modal visible={picker === 'motivation'} transparent animationType="slide" onRequestClose={() => setPicker('none')}>
+        <SafeAreaView style={styles.mfSafe} edges={['top', 'bottom']}>
+          <View style={styles.navBar}>
+            <TouchableOpacity onPress={() => setPicker('none')} style={styles.navBtn} hitSlop={8}>
+              <Text style={styles.navBtnText}>返回</Text>
+            </TouchableOpacity>
+            <Text style={styles.navTitle}>动机&可行性</Text>
+            <TouchableOpacity onPress={() => setPicker('none')} style={[styles.navBtn, styles.navBtnPrimary]} hitSlop={8}>
+              <Text style={[styles.navBtnText, { color: colors.primary, fontWeight: '600' }]}>完成</Text>
             </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+
+          <ScrollView contentContainerStyle={styles.mfScroll} keyboardShouldPersistTaps="handled">
+            <Text style={styles.mfSectionLabel}>动机</Text>
+            {motivations.map((m, i) => (
+              <View key={`m${i}`} style={styles.mfItem}>
+                <Ionicons name="sparkles" size={14} color={colors.warning} />
+                <TextInput
+                  style={styles.mfInput}
+                  value={m}
+                  onChangeText={(v) => updateList(setMotivations, i, v)}
+                  placeholder="执行目标的动力"
+                  placeholderTextColor={colors.textTertiary}
+                />
+                <TouchableOpacity onPress={() => removeFromList(setMotivations, i)} hitSlop={6}>
+                  <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
+                </TouchableOpacity>
+              </View>
+            ))}
+            <TouchableOpacity style={styles.mfAdd} onPress={() => setMotivations((arr) => [...arr, ''])}>
+              <Ionicons name="add-circle" size={22} color={colors.primary} />
+              <Text style={styles.mfAddText}>添加动机（执行目标的动力）</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.mfInfo} onPress={() => Alert.alert('动机', INFO.motivation)} hitSlop={8}>
+              <Ionicons name="information-circle-outline" size={13} color={colors.textTertiary} />
+              <Text style={styles.mfInfoText}>为什么要做？想清楚动力</Text>
+            </TouchableOpacity>
+
+            <Text style={[styles.mfSectionLabel, { marginTop: spacing.xl }]}>可行性</Text>
+            {feasibilities.map((f, i) => (
+              <View key={`f${i}`} style={styles.mfItem}>
+                <Ionicons name="build-outline" size={14} color={colors.success} />
+                <TextInput
+                  style={styles.mfInput}
+                  value={f}
+                  onChangeText={(v) => updateList(setFeasibilities, i, v)}
+                  placeholder="实现目标的基础"
+                  placeholderTextColor={colors.textTertiary}
+                />
+                <TouchableOpacity onPress={() => removeFromList(setFeasibilities, i)} hitSlop={6}>
+                  <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
+                </TouchableOpacity>
+              </View>
+            ))}
+            <TouchableOpacity style={styles.mfAdd} onPress={() => setFeasibilities((arr) => [...arr, ''])}>
+              <Ionicons name="add-circle" size={22} color={colors.primary} />
+              <Text style={styles.mfAddText}>添加可行性（实现目标的基础）</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.mfInfo} onPress={() => Alert.alert('可行性', INFO.feasibility)} hitSlop={8}>
+              <Ionicons name="information-circle-outline" size={13} color={colors.textTertiary} />
+              <Text style={styles.mfInfoText}>凭什么能做成？梳理资源与条件</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
@@ -388,12 +464,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
-  navBtn: {
-    backgroundColor: colors.card,
-    borderRadius: radius.full,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 7,
-  },
+  navBtn: { backgroundColor: colors.card, borderRadius: radius.full, paddingHorizontal: spacing.lg, paddingVertical: 7 },
   navBtnPrimary: { backgroundColor: colors.primaryLight },
   navBtnText: { fontSize: 15, color: colors.text },
   navTitle: { fontSize: 17, fontWeight: '600', color: colors.text },
@@ -409,19 +480,6 @@ const styles = StyleSheet.create({
   },
   nameInput: { flex: 1, fontSize: 17, color: colors.text, paddingVertical: 16 },
   colorDot: { width: 18, height: 18, borderRadius: 9 },
-  emojiRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },
-  emojiCell: {
-    width: 38,
-    height: 38,
-    borderRadius: radius.md,
-    backgroundColor: colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emojiCellActive: { backgroundColor: colors.primaryLight, borderColor: colors.primary, borderWidth: 1 },
-  paletteRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
-  paletteCell: { width: 26, height: 26, borderRadius: 13 },
-  paletteCellActive: { borderWidth: 3, borderColor: colors.text },
 
   chipsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg },
   metaChip: {
@@ -433,7 +491,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: 8,
   },
-  metaChipIcon: { fontSize: 13 },
   metaChipText: { fontSize: 12, color: colors.textSecondary },
 
   rowCard: {
@@ -454,7 +511,7 @@ const styles = StyleSheet.create({
   krItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md },
   krDot: { width: 8, height: 8, borderRadius: 4 },
   reorderBtns: { alignItems: 'center' },
-  krTitle: { fontSize: 14, fontWeight: '500', color: colors.text },
+  krTitleInput: { fontSize: 14, fontWeight: '500', color: colors.text, padding: 0 },
   krMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' },
   krMetaLabel: { fontSize: 12, color: colors.textTertiary },
   krNumInput: {
@@ -489,11 +546,12 @@ const styles = StyleSheet.create({
   },
   deleteText: { color: colors.danger, fontWeight: '600', fontSize: 15 },
 
-  modalMask: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', padding: spacing.xl },
+  mask: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', padding: spacing.xl },
   modalCard: { backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.xl },
   modalRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 12 },
-  newGroupRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.sm },
-  newGroupInput: {
+  dot: { width: 12, height: 12, borderRadius: 6 },
+  newRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.sm },
+  newInput: {
     flex: 1,
     backgroundColor: colors.bg,
     borderRadius: radius.md,
@@ -502,12 +560,37 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.text,
   },
-  scoreRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.lg },
-  modalDone: {
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
+
+  colorRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: 9 },
+  colorBadge: { width: 24, height: 24, borderRadius: 7, alignItems: 'center', justifyContent: 'center' },
+  colorBadgeNum: { fontSize: 11, fontWeight: '700', color: '#fff' },
+  colorRowNum: { fontSize: 16, color: colors.text },
+
+  // 动机 & 可行性
+  mfSafe: { flex: 1, backgroundColor: colors.bg },
+  mfScroll: { paddingHorizontal: spacing.lg, paddingBottom: 60 },
+  mfSectionLabel: { fontSize: 15, fontWeight: '600', color: colors.text, marginTop: spacing.md, marginBottom: spacing.sm },
+  mfItem: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
-    marginTop: spacing.sm,
+    gap: spacing.sm,
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    marginBottom: spacing.sm,
   },
+  mfInput: { flex: 1, fontSize: 14, color: colors.text, paddingVertical: 8 },
+  mfAdd: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 14,
+  },
+  mfAddText: { fontSize: 14, color: colors.textSecondary },
+  mfInfo: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: spacing.sm, paddingHorizontal: 4 },
+  mfInfoText: { fontSize: 11, color: colors.textTertiary },
 });

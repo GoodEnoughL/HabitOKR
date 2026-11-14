@@ -1,14 +1,15 @@
-﻿import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MonthCalendar } from '../components/MonthCalendar';
 import { TaskCard } from '../components/TaskCard';
+import { TaskDetailDrawer } from '../components/TaskDetailDrawer';
 import { useStore } from '../store/useStore';
-import { colors, font, radius, spacing } from '../theme';
+import { colors, font, spacing } from '../theme';
 import { addDays, parseKey, toKey, todayKey, formatCN, weekdayCN } from '../utils/date';
-import { getDayTaskStates } from '../utils/task';
+import { getDayCheckInCount, getDayTaskStates } from '../utils/task';
 
 export default function CalendarScreen() {
   const { tasks, checkIns, toggleCheckIn } = useStore();
@@ -16,6 +17,7 @@ export default function CalendarScreen() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [selectedKey, setSelectedKey] = useState(todayKey());
+  const [drawerTaskId, setDrawerTaskId] = useState<string | null>(null);
 
   const onMonthChange = (y: number, m: number) => {
     setYear(y);
@@ -29,7 +31,7 @@ export default function CalendarScreen() {
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     for (let i = 0; i < daysInMonth; i++) {
       const key = toKey(addDays(first, i));
-      const states = getDayTaskStates(tasks, checkIns, key);
+      const states = getDayTaskStates(tasks, checkIns, key).filter((s) => !s.task.paused);
       if (states.length === 0) continue;
       const doneCount = states.filter((s) => s.done).length;
       map.set(key, doneCount === states.length ? 'done' : doneCount > 0 ? 'partial' : 'pending');
@@ -48,7 +50,7 @@ export default function CalendarScreen() {
         <TouchableOpacity onPress={() => router.back()} hitSlop={8} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.text} />
         </TouchableOpacity>
-        <Text style={font.h1}>任务日历</Text>
+        <Text style={font.h1}>习惯日历</Text>
         <View style={{ width: 32 }} />
       </View>
 
@@ -88,12 +90,15 @@ export default function CalendarScreen() {
             task={task}
             dateKey={selectedKey}
             done={done}
+            todayCount={getDayCheckInCount(task, checkIns, selectedKey)}
             onToggle={() => toggleCheckIn(task.id, selectedKey)}
-            onPress={() => router.push({ pathname: '/task/edit', params: { id: task.id } })}
+            onPress={() => setDrawerTaskId(task.id)}
           />
         ))}
-        {dayStates.length === 0 && <Text style={[font.caption, { marginTop: spacing.sm }]}>这一天没有安排任务</Text>}
+        {dayStates.length === 0 && <Text style={[font.caption, { marginTop: spacing.sm }]}>这一天没有安排习惯</Text>}
       </ScrollView>
+
+      <TaskDetailDrawer taskId={drawerTaskId} visible={!!drawerTaskId} onClose={() => setDrawerTaskId(null)} />
     </SafeAreaView>
   );
 }

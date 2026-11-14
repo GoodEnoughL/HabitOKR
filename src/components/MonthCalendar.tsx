@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { colors, radius, spacing } from '../theme';
-import { getMonthMatrix, monthLabel, shiftMonth, toKey, todayKey, WEEKDAY_NAMES } from '../utils/date';
+import { getMonthMatrix, monthLabel, shiftMonth, todayKey, WEEKDAY_NAMES } from '../utils/date';
 
 interface Props {
   year: number;
