@@ -24,6 +24,9 @@ import { genId } from '../../utils/task';
 
 type Picker = 'none' | 'category' | 'color' | 'time' | 'motivation';
 
+/** 新建关键结果时轮换分配的图标（图片 4 关键结果卡片） */
+const KR_EMOJI_CHOICES = ['🎯', '📚', '⏱️', '🧠', '📖', '💪', '✍️', '🎨'];
+
 const INFO: Record<string, string> = {
   kr: '关键结果（Key Result）是衡量目标是否达成的可量化里程碑。\n目标是方向，关键结果是证据——每完成一项，目标进度就前进一步。',
   weight: '开启后，可为每个关键结果设置权重（百分比）。\n权重越高，该关键结果对整体目标进度的影响越大，用于区分重要度。',
@@ -78,7 +81,15 @@ export default function GoalEditScreen() {
     if (!newKR.trim()) return;
     setKeyResults((krs) => [
       ...krs,
-      { id: genId(), title: newKR.trim(), target: 1, current: 0, unit: '', weight: 0 },
+      {
+        id: genId(),
+        title: newKR.trim(),
+        target: 1,
+        current: 0,
+        unit: '',
+        weight: 0,
+        emoji: KR_EMOJI_CHOICES[krs.length % KR_EMOJI_CHOICES.length],
+      },
     ]);
     setNewKR('');
   };

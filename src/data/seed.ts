@@ -28,8 +28,8 @@ export function buildSeed(): { categories: Category[]; goals: Goal[]; tasks: Tas
       endDate: '2026-12-14',
       useWeight: false,
       keyResults: [
-        { id: 'kr-gf-1', title: '认识 10 个新朋友', target: 10, current: 0, unit: '人', weight: 0 },
-        { id: 'kr-gf-2', title: '主动约会 3 次', target: 3, current: 0, unit: '次', weight: 0 },
+        { id: 'kr-gf-1', title: '认识 10 个新朋友', target: 10, current: 0, unit: '人', weight: 0, emoji: '🙋' },
+        { id: 'kr-gf-2', title: '主动约会 3 次', target: 3, current: 0, unit: '次', weight: 0, emoji: '💛' },
       ],
       createdAt: new Date().toISOString(),
     },

@@ -211,6 +211,12 @@ export function goalProgress(goal: Goal): number {
   return krs.reduce((s, k) => s + Math.min(1, k.current / k.target), 0) / krs.length;
 }
 
+/** 距离目标结束日期还剩多少天；未设置结束日期返回 null，已结束返回 0 */
+export function daysUntilEnd(goal: Goal): number | null {
+  if (!goal.endDate) return null;
+  return Math.max(0, daysBetween(todayKey(), goal.endDate));
+}
+
 /**
  * 推导目标状态（图片 1 的四个 Tab）：
  * - 未计划：未设置任何时间

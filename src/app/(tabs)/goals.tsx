@@ -68,36 +68,34 @@ export default function GoalsScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      {/* 顶部导航 */}
-      <View style={styles.header}>
+      {/* 顶部导航（图片 3）：返回 + 右上「…」「+」 */}
+      <View style={styles.topBar}>
         <TouchableOpacity
           style={styles.iconBtn}
           hitSlop={8}
-          onPress={() => setCategoryId(undefined)}
+          onPress={() => (categoryId ? setCategoryId(undefined) : router.push('/summary'))}
         >
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.titleBtn} onPress={() => setPickerVisible(true)} hitSlop={8}>
-          <Text style={styles.title} numberOfLines={1}>
-            {selectedCategory ? selectedCategory.name : '全部目标'}
-          </Text>
-          <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
-        </TouchableOpacity>
-        <View style={styles.headerRight}>
+        <View style={styles.topRight}>
           <TouchableOpacity style={styles.iconBtn} hitSlop={8} onPress={() => setPickerVisible(true)}>
             <Ionicons name="ellipsis-horizontal" size={22} color={colors.text} />
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.iconBtn}
+            style={styles.addBtn}
             hitSlop={8}
             onPress={() =>
               router.push({ pathname: '/goal/edit', params: categoryId ? { categoryId } : {} })
             }
           >
-            <Ionicons name="add" size={26} color={colors.text} />
+            <Ionicons name="add" size={22} color={colors.text} />
           </TouchableOpacity>
         </View>
       </View>
+
+      <Text style={styles.pageTitle} numberOfLines={1}>
+        {selectedCategory ? selectedCategory.name : '全部目标'}
+      </Text>
 
       {/* 状态 Tab */}
       <View style={styles.statusBar}>
@@ -125,8 +123,7 @@ export default function GoalsScreen() {
           <GoalCard
             key={goal.id}
             goal={goal}
-            category={categories.find((c) => c.id === goal.categoryId)}
-            onPress={() => router.push({ pathname: '/goal/edit', params: { id: goal.id } })}
+            onPress={() => router.push({ pathname: '/goal/detail', params: { id: goal.id } })}
           />
         ))}
         {list.length === 0 && (
@@ -198,17 +195,33 @@ export default function GoalsScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
-  header: {
+  topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  headerRight: { flexDirection: 'row', alignItems: 'center' },
+  topRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  titleBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: 180 },
-  title: { fontSize: 17, fontWeight: '600', color: colors.text },
+  addBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pageTitle: {
+    fontSize: 30,
+    fontWeight: '700',
+    color: colors.text,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.md,
+  },
   statusBar: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   statusScroll: { paddingHorizontal: spacing.md, gap: spacing.xl },
   statusTab: { paddingVertical: spacing.md, alignItems: 'center' },

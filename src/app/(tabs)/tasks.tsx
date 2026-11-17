@@ -21,6 +21,11 @@ export default function TasksScreen() {
     () => getDayTaskStates(tasks, checkIns, selectedKey),
     [tasks, checkIns, selectedKey]
   );
+  // 暂停中的习惯统一排到最底部：上面是需要打卡的习惯，下面是暂时挂起的习惯
+  const orderedDayStates = useMemo(
+    () => [...dayStates.filter((s) => !s.task.paused), ...dayStates.filter((s) => s.task.paused)],
+    [dayStates]
+  );
   // 暂停中的习惯仍展示在列表里，但不计入当日完成进度
   const activeDayStates = useMemo(() => dayStates.filter((s) => !s.task.paused), [dayStates]);
   const done = activeDayStates.filter((s) => s.done);
@@ -79,7 +84,7 @@ export default function TasksScreen() {
         )}
 
         <View style={{ marginTop: spacing.md }}>
-          {dayStates.map(({ task, done: d }) => (
+          {orderedDayStates.map(({ task, done: d }) => (
             <TaskCard
               key={task.id}
               task={task}

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Category, Goal } from '../types';
+import { Goal } from '../types';
 import { colors, radius, spacing } from '../theme';
 import { formatSlash } from '../utils/date';
 import { formatProgressPct, goalProgress } from '../utils/task';
@@ -9,11 +9,10 @@ import { ProgressBar } from './ProgressBar';
 
 interface Props {
   goal: Goal;
-  category?: Category;
   onPress?: () => void;
 }
 
-export function GoalCard({ goal, category, onPress }: Props) {
+export function GoalCard({ goal, onPress }: Props) {
   const progress = goalProgress(goal);
   const hasDates = !!(goal.startDate && goal.endDate);
 
@@ -31,15 +30,11 @@ export function GoalCard({ goal, category, onPress }: Props) {
       </View>
 
       <View style={styles.bottomRow}>
-        {category ? (
-          <View style={[styles.tag, { backgroundColor: category.color + '1A' }]}>
-            <Ionicons name="folder" size={11} color={category.color} />
-            <Text style={[styles.tagText, { color: category.color }]}>{category.name}</Text>
-          </View>
-        ) : null}
-        <ProgressBar progress={progress} color={goal.color} height={5} />
+        <ProgressBar progress={progress} color={goal.color} height={6} />
         <Text style={styles.pct}>{formatProgressPct(progress)}</Text>
-        <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+        <View style={styles.chevron}>
+          <Ionicons name="chevron-forward" size={12} color={colors.primary} />
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -50,21 +45,20 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md + 2,
+    paddingVertical: spacing.lg,
     marginBottom: spacing.md,
   },
   title: { fontSize: 16, fontWeight: '700', color: colors.text },
   dateRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 },
   dateText: { fontSize: 12, color: colors.textSecondary },
   bottomRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md },
-  tag: {
-    flexDirection: 'row',
+  pct: { fontSize: 12, color: colors.textSecondary, fontWeight: '600', minWidth: 52, textAlign: 'right' },
+  chevron: {
+    width: 20,
+    height: 20,
+    borderRadius: radius.sm,
+    backgroundColor: colors.primaryLight,
     alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.full,
+    justifyContent: 'center',
   },
-  tagText: { fontSize: 11, fontWeight: '600' },
-  pct: { fontSize: 12, color: colors.textSecondary, fontWeight: '600', minWidth: 44, textAlign: 'right' },
 });

@@ -38,30 +38,30 @@ interface StoreState {
   importData: (text: string) => boolean;
 }
 
+/**
+ * 按打卡份数增减关联关键结果的进度。
+ * deltaCount：正数为新增打卡份数，负数为撤销的打卡份数（撤销可一次多份）。
+ */
 const applyCheckInDelta = (
   goals: Goal[],
   tasks: Task[],
   taskId: ID,
-  delta: 1 | -1
-): { goals: Goal[]; tasks: Task[] } => {
+  deltaCount: number
+): Goal[] => {
   const task = tasks.find((t) => t.id === taskId);
-  if (!task) return { goals, tasks };
-  let nextGoals = goals;
-  if (task.goalId && task.krId) {
-    nextGoals = goals.map((g) =>
-      g.id === task.goalId
-        ? {
-            ...g,
-            keyResults: g.keyResults.map((k) =>
-              k.id === task.krId
-                ? { ...k, current: Math.max(0, k.current + delta * task.increment) }
-                : k
-            ),
-          }
-        : g
-    );
-  }
-  return { goals: nextGoals, tasks };
+  if (!task || !task.goalId || !task.krId) return goals;
+  return goals.map((g) =>
+    g.id === task.goalId
+      ? {
+          ...g,
+          keyResults: g.keyResults.map((k) =>
+            k.id === task.krId
+              ? { ...k, current: Math.max(0, k.current + deltaCount * task.increment) }
+              : k
+          ),
+        }
+      : g
+  );
 };
 
 const seed = buildSeed();
@@ -122,21 +122,16 @@ export const useStore = create<StoreState>()(
         const todays = checkIns.filter((c) => c.taskId === taskId && c.date === date);
         if (todays.length < target) {
           // 未达当日目标：追加一次打卡
-          const next = applyCheckInDelta(goals, tasks, taskId, 1);
           set({
             checkIns: [...checkIns, { id: genId(), taskId, date, createdAt: new Date().toISOString() }],
-            goals: next.goals,
-            tasks: next.tasks,
+            goals: applyCheckInDelta(goals, tasks, taskId, 1),
           });
         } else {
-          // 已达目标：撤销最近一次打卡
-          const latest = [...todays].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
-          if (!latest) return;
-          const next = applyCheckInDelta(goals, tasks, taskId, -1);
+          // 已打满当日目标：再次点击把当天次数重置为 0（清除全部打卡并回退进度）
+          const ids = new Set(todays.map((c) => c.id));
           set({
-            checkIns: checkIns.filter((c) => c.id !== latest.id),
-            goals: next.goals,
-            tasks: next.tasks,
+            checkIns: checkIns.filter((c) => !ids.has(c.id)),
+            goals: applyCheckInDelta(goals, tasks, taskId, -todays.length),
           });
         }
       },

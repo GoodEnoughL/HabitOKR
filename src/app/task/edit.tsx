@@ -39,7 +39,11 @@ type ExpandKey = 'frequency' | 'completion' | 'dailyTarget' | 'difficulty' | 're
 const DAILY_TARGET_OPTIONS = [1, 2, 3];
 
 export default function TaskEditScreen() {
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { id, goalId: presetGoalId, krId: presetKrId } = useLocalSearchParams<{
+    id?: string;
+    goalId?: string;
+    krId?: string;
+  }>();
   const { tasks, goals, addTask, updateTask, removeTask } = useStore();
   const editing = useMemo(() => tasks.find((t) => t.id === id), [tasks, id]);
 
@@ -57,8 +61,8 @@ export default function TaskEditScreen() {
   const [reminderEnabled, setReminderEnabled] = useState(editing?.reminderEnabled ?? true);
   const [reminderTime, setReminderTime] = useState(editing?.reminderTime ?? '09:00');
 
-  const [goalId, setGoalId] = useState<string | undefined>(editing?.goalId);
-  const [krId, setKrId] = useState<string | undefined>(editing?.krId);
+  const [goalId, setGoalId] = useState<string | undefined>(editing?.goalId ?? presetGoalId);
+  const [krId, setKrId] = useState<string | undefined>(editing?.krId ?? presetKrId);
 
   const [expanded, setExpanded] = useState<ExpandKey>(null);
   const [showEmoji, setShowEmoji] = useState(false);

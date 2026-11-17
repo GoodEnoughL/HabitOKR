@@ -17,6 +17,10 @@ export interface KeyResult {
   unit: string;
   /** 权重 0-100，仅在目标开启权重时生效 */
   weight: number;
+  /** 图标（图片 4 关键结果卡片左下角） */
+  emoji?: string;
+  /** 备忘（图片 5 的「备忘」Tab） */
+  memo?: string;
 }
 
 /** 目标在「目标库」中的状态，由日期与进度推导 */
@@ -37,6 +41,8 @@ export interface Goal {
   endDate?: string;
   useWeight: boolean;
   keyResults: KeyResult[];
+  /** 备注（图片 4 的「备注」区块） */
+  memo?: string;
   createdAt: string;
 }
 
