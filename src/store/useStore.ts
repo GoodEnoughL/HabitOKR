@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { buildSeed } from '../data/seed';
@@ -122,12 +123,14 @@ export const useStore = create<StoreState>()(
         const todays = checkIns.filter((c) => c.taskId === taskId && c.date === date);
         if (todays.length < target) {
           // 未达当日目标：追加一次打卡
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
           set({
             checkIns: [...checkIns, { id: genId(), taskId, date, createdAt: new Date().toISOString() }],
             goals: applyCheckInDelta(goals, tasks, taskId, 1),
           });
         } else {
           // 已打满当日目标：再次点击把当天次数重置为 0（清除全部打卡并回退进度）
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
           const ids = new Set(todays.map((c) => c.id));
           set({
             checkIns: checkIns.filter((c) => !ids.has(c.id)),
