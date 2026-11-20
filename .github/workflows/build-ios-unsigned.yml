@@ -58,22 +58,19 @@ jobs:
           rm -rf "$BUILD_DIR" "$DERIVED_DATA"
           mkdir -p "$BUILD_DIR"
 
-          # Use `build` (not archive). Archive has a whole extra pass that
-          # re-signs everything and can fail for obscure entitlements reasons
-          # on CI. `build` just compiles; the .app in Build/Products/Release-iphoneos
-          # is exactly what we need to wrap into an IPA.
+          # IMPORTANT: do NOT pass any CODE_SIGNING overrides to xcodebuild.
+          # Pods (especially ExpoModulesJSI) have build-script phases that
+          # depend on being able to sign internal products themselves — our
+          # global NO-SIGN flags break them. The runner has an ad-hoc signing
+          # identity available by default, which is fine for our purposes;
+          # we'll strip the signature off AFTER the build completes.
           xcodebuild build \
             -workspace ios/HabitOKR.xcworkspace \
             -scheme "$SCHEME" \
             -configuration "$CONFIG" \
             -sdk iphoneos \
             -derivedDataPath "$DERIVED_DATA" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            CODE_SIGN_STYLE=Manual
+            | tee "$BUILD_DIR/xcodebuild.log"
 
           # Find the compiled .app
           COMPILED_APP="$DERIVED_DATA/Build/Products/Release-iphoneos/$SCHEME.app"
@@ -86,7 +83,8 @@ jobs:
           echo "Found compiled app: $COMPILED_APP"
           cp -R "$COMPILED_APP" "$APP_PATH"
 
-          # Remove any leftover signature / extended attributes
+          # Strip all code signatures and extended attributes so Sideloadly
+          # can re-sign with the user's Apple ID
           codesign --remove-signature "$APP_PATH" || true
           xattr -cr "$APP_PATH" || true
 
@@ -104,3 +102,12 @@ jobs:
           path: build/HabitOKR.ipa
           if-no-files-found: error
           retention-days: 30
+
+      - name: Upload xcodebuild log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log
+          if-no-files-found: warn
+          retention-days: 7
