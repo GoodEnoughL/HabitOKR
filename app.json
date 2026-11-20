@@ -14,7 +14,19 @@
     "plugins": [
       "expo-router",
       "expo-font",
-      "expo-sharing"
-    ]
+      "expo-sharing",
+      "expo-haptics"
+    ],
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "e2e11062-4a60-47ea-be18-fda355f013fe"
+      }
+    },
+    "owner": "goodenoughl"
   }
 }
