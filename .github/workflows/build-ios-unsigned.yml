@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    # macos-15 = Xcode 16.4 (stable, compatible with Expo SDK 58 / RN 0.88)
+    # macos-15 = Xcode 16 (stable, compatible with Expo SDK 58 / RN 0.88)
     runs-on: macos-15
 
     steps:
@@ -43,72 +43,59 @@ jobs:
       - name: Install Pods
         run: cd ios && pod install --repo-update
 
-      - name: Patch main target to skip signing
+      - name: Ensure Pods xcconfig doesn't force DEVELOPMENT_TEAM
         run: |
-          set -e
-          # prebuild generates ios/HabitOKR.xcodeproj/project.pbxproj where
-          # the main target (HabitOKR) has DEVELOPMENT_TEAM = "". Xcode 16
-          # still refuses to build the main target without a team, even
-          # though we have no intention of keeping the signature.
-          #
-          # Fix: inject NO-SIGN build settings into every buildSettings block
-          # that contains DEVELOPMENT_TEAM = "" (these belong to the main
-          # target; Pods project has its own pbxproj and is untouched).
-          #
-          # We do NOT pass CODE_SIGNING_ALLOWED=NO globally to xcodebuild,
-          # because that breaks Pods' build-script phases (ExpoModulesJSI
-          # etc. need to sign internal xcframeworks during their own build).
-          Pbxproj="ios/HabitOKR.xcodeproj/project.pbxproj"
-          sed -i '' '/DEVELOPMENT_TEAM = "";/{
-            i\
-            CODE_SIGNING_ALLOWED = NO;\
-            CODE_SIGNING_REQUIRED = NO;\
-            CODE_SIGN_IDENTITY = "";\
-            PROVISIONING_PROFILE_SPECIFIER = "";\
-            CODE_SIGN_STYLE = Manual;
-          }' "$Pbxproj"
+          # Pods may inject DEVELOPMENT_TEAM into its xcconfigs which overrides
+          # our command-line flags. Blank them out so our CODE_SIGNING_ALLOWED=NO
+          # takes effect for everything downstream.
+          for f in ios/Pods/Target\ Support\ Files/Pods-HabitOKR/*.xcconfig; do
+            echo "=== Patching $f ==="
+            cat "$f"
+            sed -i '' 's/DEVELOPMENT_TEAM = .*/DEVELOPMENT_TEAM = "";/g' "$f"
+          done
 
-          echo "=== pbxproj patched (showing injected settings) ==="
-          grep -A 6 'CODE_SIGNING_ALLOWED' "$Pbxproj" | head -40
-
-      - name: Build unsigned IPA
+      - name: Build unsigned IPA (archive + strip)
         run: |
           set -e
           SCHEME="HabitOKR"
           CONFIG="Release"
           ROOT="$PWD"
           BUILD_DIR="$ROOT/build"
-          DERIVED_DATA="$ROOT/DerivedData"
+          ARCHIVE_PATH="$BUILD_DIR/HabitOKR.xcarchive"
           IPA_PATH="$BUILD_DIR/HabitOKR.ipa"
 
-          rm -rf "$BUILD_DIR" "$DERIVED_DATA"
+          rm -rf "$BUILD_DIR"
           mkdir -p "$BUILD_DIR"
 
-          # No global signing flags — Pods scripts need normal signing.
-          # The main target was already patched in the previous step.
-          xcodebuild build \
+          # Use archive (Xcode's standard packaging flow) — friendlier to Pods
+          # script phases than `build`. Global NO-SIGN flags are the supported
+          # official way; they blank DEVELOPMENT_TEAM so Xcode can't complain.
+          xcodebuild archive \
             -workspace ios/HabitOKR.xcworkspace \
             -scheme "$SCHEME" \
             -configuration "$CONFIG" \
-            -sdk iphoneos \
-            -derivedDataPath "$DERIVED_DATA"
+            -destination 'generic/platform=iOS' \
+            -archivePath "$ARCHIVE_PATH" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            || {
+              echo ""
+              echo "========== BUILD FAILED — last 200 lines of output =========="
+              echo "==============================================================="
+              exit 1
+            }
 
-          echo "=== Build finished, listing DerivedData ==="
-          ls -la "$DERIVED_DATA/Build/Products/"
+          echo "=== Archive OK, extracting .app ==="
+          ls -la "$ARCHIVE_PATH/Products/Applications/"
 
-          # Find the compiled .app
-          COMPILED_APP=$(find "$DERIVED_DATA/Build/Products/Release-iphoneos" -name "*.app" -type d | head -1)
-          if [ -z "$COMPILED_APP" ]; then
-            echo "ERROR: compiled .app bundle not found"
-            find "$DERIVED_DATA/Build/Products" -maxdepth 3 2>&1 | head -30 || true
-            exit 1
-          fi
-
-          echo "Found compiled app: $COMPILED_APP"
           APP_PATH="$BUILD_DIR/HabitOKR.app"
-          cp -R "$COMPILED_APP" "$APP_PATH"
+          cp -R "$ARCHIVE_PATH/Products/Applications/$SCHEME.app" "$APP_PATH"
 
-          # Strip any leftover signatures + extended attributes
+          # Strip signatures + extended attributes for Sideloadly
           codesign --remove-signature "$APP_PATH" || true
           xattr -cr "$APP_PATH" || true
 
