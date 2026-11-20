@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    # macos-15 = Xcode 16 (stable, compatible with Expo SDK 58)
+    # macos-15 = Xcode 16.4 (stable, compatible with Expo SDK 58 / RN 0.88)
     runs-on: macos-15
 
     steps:
@@ -33,7 +33,6 @@ jobs:
         run: |
           sudo gem install bundler --no-document
           brew install cocoapods || gem install cocoapods
-          pod setup --verbose || true
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -44,6 +43,19 @@ jobs:
       - name: Install Pods
         run: cd ios && pod install --repo-update
 
+      - name: Verify workspace and scheme
+        run: |
+          set -e
+          echo "=== ios directory contents ==="
+          ls -la ios/
+          echo ""
+          echo "=== List schemes from workspace ==="
+          xcodebuild -list -workspace ios/HabitOKR.xcworkspace 2>&1 | head -30
+          echo ""
+          echo "=== Check workspace exists ==="
+          test -d ios/HabitOKR.xcworkspace
+          echo "Workspace OK"
+
       - name: Build unsigned IPA
         run: |
           set -e
@@ -53,42 +65,42 @@ jobs:
           BUILD_DIR="$ROOT/build"
           DERIVED_DATA="$ROOT/DerivedData"
           IPA_PATH="$BUILD_DIR/HabitOKR.ipa"
-          APP_PATH="$BUILD_DIR/HabitOKR.app"
 
           rm -rf "$BUILD_DIR" "$DERIVED_DATA"
           mkdir -p "$BUILD_DIR"
 
-          # IMPORTANT: do NOT pass any CODE_SIGNING overrides to xcodebuild.
-          # Pods (especially ExpoModulesJSI) have build-script phases that
-          # depend on being able to sign internal products themselves — our
-          # global NO-SIGN flags break them. The runner has an ad-hoc signing
-          # identity available by default, which is fine for our purposes;
-          # we'll strip the signature off AFTER the build completes.
+          # Let xcodebuild use whatever signing identity the runner has
+          # by default. We strip signatures OFF after build, not before.
+          # -quiet hides the linker "note: Disabling previews" spam so
+          # real errors are visible
           xcodebuild build \
             -workspace ios/HabitOKR.xcworkspace \
             -scheme "$SCHEME" \
             -configuration "$CONFIG" \
             -sdk iphoneos \
             -derivedDataPath "$DERIVED_DATA" \
-            | tee "$BUILD_DIR/xcodebuild.log"
+            -quiet
+
+          echo "=== Build finished, listing DerivedData ==="
+          ls -la "$DERIVED_DATA/Build/Products/" 2>&1 || true
 
           # Find the compiled .app
-          COMPILED_APP="$DERIVED_DATA/Build/Products/Release-iphoneos/$SCHEME.app"
-          if [ ! -d "$COMPILED_APP" ]; then
-            echo "ERROR: compiled app not found at $COMPILED_APP"
-            ls -la "$DERIVED_DATA/Build/Products/" 2>&1 || true
+          COMPILED_APP=$(find "$DERIVED_DATA/Build/Products/Release-iphoneos" -name "*.app" -type d | head -1)
+          if [ -z "$COMPILED_APP" ]; then
+            echo "ERROR: compiled .app bundle not found anywhere"
+            find "$DERIVED_DATA/Build/Products" -maxdepth 3 2>&1 | head -30 || true
             exit 1
           fi
 
           echo "Found compiled app: $COMPILED_APP"
+          APP_PATH="$BUILD_DIR/HabitOKR.app"
           cp -R "$COMPILED_APP" "$APP_PATH"
 
-          # Strip all code signatures and extended attributes so Sideloadly
-          # can re-sign with the user's Apple ID
+          # Strip all code signatures and extended attributes
           codesign --remove-signature "$APP_PATH" || true
           xattr -cr "$APP_PATH" || true
 
-          # Wrap into IPA
+          # Wrap into IPA (Payload/ folder zip)
           mkdir -p "$BUILD_DIR/Payload"
           cp -R "$APP_PATH" "$BUILD_DIR/Payload/"
           cd "$BUILD_DIR"
@@ -102,12 +114,3 @@ jobs:
           path: build/HabitOKR.ipa
           if-no-files-found: error
           retention-days: 30
-
-      - name: Upload xcodebuild log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: xcodebuild-log
-          path: build/xcodebuild.log
-          if-no-files-found: warn
-          retention-days: 7
