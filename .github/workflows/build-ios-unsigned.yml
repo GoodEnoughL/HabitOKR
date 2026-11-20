@@ -35,7 +35,7 @@ jobs:
           pod setup --verbose || true
 
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm ci --no-audit --no-fund --legacy-peer-deps
 
       - name: Prebuild iOS (generate native project)
         run: npx expo prebuild --platform ios --clean
