@@ -56,35 +56,30 @@ jobs:
 
           mkdir -p "$BUILD_DIR"
 
-          # Force-disable ALL signing — Xcode must not ask for a dev team
-          # DEVELOPMENT_TEAM="" is the critical one (Xcode 16 treats missing
-          # team as fatal even when CODE_SIGNING_ALLOWED=NO is set)
+          # Let Xcode sign with whatever local identity it can find — the goal
+          # here is just to get a clean archive. We strip the signature right
+          # after so Sideloadly can re-sign it with the user's Apple ID.
           xcodebuild archive \
             -workspace ios/HabitOKR.xcworkspace \
             -scheme "$SCHEME" \
             -configuration "$CONFIG" \
             -archivePath "$ARCHIVE_PATH" \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            CODE_SIGN_STYLE=Manual
+            -destination 'generic/platform=iOS'
 
-          # Find the .app inside the archive
+          # Extract the .app bundle
           cp -R "$ARCHIVE_PATH/Products/Applications/$SCHEME.app" "$APP_PATH"
 
-          # Remove code signature (belt-and-suspenders)
+          # Strip ALL code signatures (Mach-O + embedded entitlements)
           codesign --remove-signature "$APP_PATH" || true
+          # Also remove extended attributes that can trip Sideloadly
+          xattr -cr "$APP_PATH" || true
 
-          # Wrap into IPA (just a zip with .app inside)
+          # Wrap into IPA — just a zip with .app inside a Payload/ folder
           mkdir -p "$BUILD_DIR/Payload"
           cp -R "$APP_PATH" "$BUILD_DIR/Payload/"
           cd "$BUILD_DIR"
           zip -r -q "$IPA_PATH" Payload
-
-          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+          ls -lh "$IPA_PATH"
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
