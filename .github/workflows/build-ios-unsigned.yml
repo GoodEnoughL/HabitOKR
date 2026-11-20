@@ -34,10 +34,10 @@ jobs:
           brew install cocoapods || gem install cocoapods
           pod setup --verbose || true
 
-      - name: Install dependencies (bun)
+      - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Prebuild iOS (generate native project)
+      - name: Prebuild iOS
         run: npx expo prebuild --platform ios --clean
 
       - name: Install Pods
@@ -55,7 +55,6 @@ jobs:
 
           mkdir -p "$BUILD_DIR"
 
-          # Archive with code signing DISABLED — produces unsigned app bundle
           xcodebuild archive \
             -project ios/HabitOKR.xcodeproj \
             -scheme "$SCHEME" \
@@ -66,16 +65,11 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO
 
-          # Find the .app inside the archive
           cp -R "$ARCHIVE_PATH/Products/Applications/$SCHEME.app" "$APP_PATH"
-
-          # Wrap into IPA (just a zip with .app inside)
           mkdir -p "$BUILD_DIR/Payload"
           cp -R "$APP_PATH" "$BUILD_DIR/Payload/"
           cd "$BUILD_DIR"
           zip -r -q "$IPA_PATH" Payload
-
-          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4

@@ -14,8 +14,7 @@
     "plugins": [
       "expo-router",
       "expo-font",
-      "expo-sharing",
-      "expo-haptics"
+      "expo-sharing"
     ],
     "extra": {
       "router": {
