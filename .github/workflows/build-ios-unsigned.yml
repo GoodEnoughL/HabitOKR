@@ -17,7 +17,6 @@ concurrency:
 
 jobs:
   build:
-    # macos-15 = Xcode 16 (stable, compatible with Expo SDK 58 / RN 0.88)
     runs-on: macos-15
 
     steps:
@@ -43,17 +42,6 @@ jobs:
       - name: Install Pods
         run: cd ios && pod install --repo-update
 
-      - name: Ensure Pods xcconfig doesn't force DEVELOPMENT_TEAM
-        run: |
-          # Pods may inject DEVELOPMENT_TEAM into its xcconfigs which overrides
-          # our command-line flags. Blank them out so our CODE_SIGNING_ALLOWED=NO
-          # takes effect for everything downstream.
-          for f in ios/Pods/Target\ Support\ Files/Pods-HabitOKR/*.xcconfig; do
-            echo "=== Patching $f ==="
-            cat "$f"
-            sed -i '' 's/DEVELOPMENT_TEAM = .*/DEVELOPMENT_TEAM = "";/g' "$f"
-          done
-
       - name: Build unsigned IPA (archive + strip)
         run: |
           set -e
@@ -67,13 +55,11 @@ jobs:
           rm -rf "$BUILD_DIR"
           mkdir -p "$BUILD_DIR"
 
-          # Use archive (Xcode's standard packaging flow) — friendlier to Pods
-          # script phases than `build`. Global NO-SIGN flags are the supported
-          # official way; they blank DEVELOPMENT_TEAM so Xcode can't complain.
           xcodebuild archive \
             -workspace ios/HabitOKR.xcworkspace \
             -scheme "$SCHEME" \
             -configuration "$CONFIG" \
+            -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -archivePath "$ARCHIVE_PATH" \
             CODE_SIGNING_ALLOWED=NO \
@@ -81,25 +67,17 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
             CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM="" \
-            || {
-              echo ""
-              echo "========== BUILD FAILED — last 200 lines of output =========="
-              echo "==============================================================="
-              exit 1
-            }
+            DEVELOPMENT_TEAM=""
 
           echo "=== Archive OK, extracting .app ==="
           ls -la "$ARCHIVE_PATH/Products/Applications/"
 
-          APP_PATH="$BUILD_DIR/HabitOKR.app"
+          APP_PATH="$BUILD_DIR/$SCHEME.app"
           cp -R "$ARCHIVE_PATH/Products/Applications/$SCHEME.app" "$APP_PATH"
 
-          # Strip signatures + extended attributes for Sideloadly
           codesign --remove-signature "$APP_PATH" || true
           xattr -cr "$APP_PATH" || true
 
-          # Wrap into IPA (Payload/ folder zip)
           mkdir -p "$BUILD_DIR/Payload"
           cp -R "$APP_PATH" "$BUILD_DIR/Payload/"
           cd "$BUILD_DIR"
