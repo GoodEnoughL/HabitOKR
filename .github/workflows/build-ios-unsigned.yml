@@ -43,18 +43,33 @@ jobs:
       - name: Install Pods
         run: cd ios && pod install --repo-update
 
-      - name: Verify workspace and scheme
+      - name: Patch main target to skip signing
         run: |
           set -e
-          echo "=== ios directory contents ==="
-          ls -la ios/
-          echo ""
-          echo "=== List schemes from workspace ==="
-          xcodebuild -list -workspace ios/HabitOKR.xcworkspace 2>&1 | head -30
-          echo ""
-          echo "=== Check workspace exists ==="
-          test -d ios/HabitOKR.xcworkspace
-          echo "Workspace OK"
+          # prebuild generates ios/HabitOKR.xcodeproj/project.pbxproj where
+          # the main target (HabitOKR) has DEVELOPMENT_TEAM = "". Xcode 16
+          # still refuses to build the main target without a team, even
+          # though we have no intention of keeping the signature.
+          #
+          # Fix: inject NO-SIGN build settings into every buildSettings block
+          # that contains DEVELOPMENT_TEAM = "" (these belong to the main
+          # target; Pods project has its own pbxproj and is untouched).
+          #
+          # We do NOT pass CODE_SIGNING_ALLOWED=NO globally to xcodebuild,
+          # because that breaks Pods' build-script phases (ExpoModulesJSI
+          # etc. need to sign internal xcframeworks during their own build).
+          Pbxproj="ios/HabitOKR.xcodeproj/project.pbxproj"
+          sed -i '' '/DEVELOPMENT_TEAM = "";/{
+            i\
+            CODE_SIGNING_ALLOWED = NO;\
+            CODE_SIGNING_REQUIRED = NO;\
+            CODE_SIGN_IDENTITY = "";\
+            PROVISIONING_PROFILE_SPECIFIER = "";\
+            CODE_SIGN_STYLE = Manual;
+          }' "$Pbxproj"
+
+          echo "=== pbxproj patched (showing injected settings) ==="
+          grep -A 6 'CODE_SIGNING_ALLOWED' "$Pbxproj" | head -40
 
       - name: Build unsigned IPA
         run: |
@@ -69,25 +84,22 @@ jobs:
           rm -rf "$BUILD_DIR" "$DERIVED_DATA"
           mkdir -p "$BUILD_DIR"
 
-          # Let xcodebuild use whatever signing identity the runner has
-          # by default. We strip signatures OFF after build, not before.
-          # -quiet hides the linker "note: Disabling previews" spam so
-          # real errors are visible
+          # No global signing flags — Pods scripts need normal signing.
+          # The main target was already patched in the previous step.
           xcodebuild build \
             -workspace ios/HabitOKR.xcworkspace \
             -scheme "$SCHEME" \
             -configuration "$CONFIG" \
             -sdk iphoneos \
-            -derivedDataPath "$DERIVED_DATA" \
-            -quiet
+            -derivedDataPath "$DERIVED_DATA"
 
           echo "=== Build finished, listing DerivedData ==="
-          ls -la "$DERIVED_DATA/Build/Products/" 2>&1 || true
+          ls -la "$DERIVED_DATA/Build/Products/"
 
           # Find the compiled .app
           COMPILED_APP=$(find "$DERIVED_DATA/Build/Products/Release-iphoneos" -name "*.app" -type d | head -1)
           if [ -z "$COMPILED_APP" ]; then
-            echo "ERROR: compiled .app bundle not found anywhere"
+            echo "ERROR: compiled .app bundle not found"
             find "$DERIVED_DATA/Build/Products" -maxdepth 3 2>&1 | head -30 || true
             exit 1
           fi
@@ -96,7 +108,7 @@ jobs:
           APP_PATH="$BUILD_DIR/HabitOKR.app"
           cp -R "$COMPILED_APP" "$APP_PATH"
 
-          # Strip all code signatures and extended attributes
+          # Strip any leftover signatures + extended attributes
           codesign --remove-signature "$APP_PATH" || true
           xattr -cr "$APP_PATH" || true
 
