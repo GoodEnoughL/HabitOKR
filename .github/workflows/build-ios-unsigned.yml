@@ -49,32 +49,48 @@ jobs:
           set -e
           SCHEME="HabitOKR"
           CONFIG="Release"
-          BUILD_DIR="$PWD/build"
-          ARCHIVE_PATH="$BUILD_DIR/HabitOKR.xcarchive"
+          ROOT="$PWD"
+          BUILD_DIR="$ROOT/build"
+          DERIVED_DATA="$ROOT/DerivedData"
           IPA_PATH="$BUILD_DIR/HabitOKR.ipa"
           APP_PATH="$BUILD_DIR/HabitOKR.app"
 
+          rm -rf "$BUILD_DIR" "$DERIVED_DATA"
           mkdir -p "$BUILD_DIR"
 
-          # Let Xcode sign with whatever local identity it can find — the goal
-          # here is just to get a clean archive. We strip the signature right
-          # after so Sideloadly can re-sign it with the user's Apple ID.
-          xcodebuild archive \
+          # Use `build` (not archive). Archive has a whole extra pass that
+          # re-signs everything and can fail for obscure entitlements reasons
+          # on CI. `build` just compiles; the .app in Build/Products/Release-iphoneos
+          # is exactly what we need to wrap into an IPA.
+          xcodebuild build \
             -workspace ios/HabitOKR.xcworkspace \
             -scheme "$SCHEME" \
             -configuration "$CONFIG" \
-            -archivePath "$ARCHIVE_PATH" \
-            -destination 'generic/platform=iOS'
+            -sdk iphoneos \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            CODE_SIGN_STYLE=Manual
 
-          # Extract the .app bundle
-          cp -R "$ARCHIVE_PATH/Products/Applications/$SCHEME.app" "$APP_PATH"
+          # Find the compiled .app
+          COMPILED_APP="$DERIVED_DATA/Build/Products/Release-iphoneos/$SCHEME.app"
+          if [ ! -d "$COMPILED_APP" ]; then
+            echo "ERROR: compiled app not found at $COMPILED_APP"
+            ls -la "$DERIVED_DATA/Build/Products/" 2>&1 || true
+            exit 1
+          fi
 
-          # Strip ALL code signatures (Mach-O + embedded entitlements)
+          echo "Found compiled app: $COMPILED_APP"
+          cp -R "$COMPILED_APP" "$APP_PATH"
+
+          # Remove any leftover signature / extended attributes
           codesign --remove-signature "$APP_PATH" || true
-          # Also remove extended attributes that can trip Sideloadly
           xattr -cr "$APP_PATH" || true
 
-          # Wrap into IPA — just a zip with .app inside a Payload/ folder
+          # Wrap into IPA
           mkdir -p "$BUILD_DIR/Payload"
           cp -R "$APP_PATH" "$BUILD_DIR/Payload/"
           cd "$BUILD_DIR"
