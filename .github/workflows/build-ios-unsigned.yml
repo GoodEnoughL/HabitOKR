@@ -17,7 +17,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-latest
+    # macos-15 = Xcode 16 (stable, compatible with Expo SDK 58)
+    # macos-latest = Xcode 26 beta (incompatible — all Expo modulemaps break)
+    runs-on: macos-15
 
     steps:
       - name: Checkout
@@ -55,21 +57,30 @@ jobs:
 
           mkdir -p "$BUILD_DIR"
 
+          # Use workspace (not project) — CocoaPods integrates Pods there.
+          # Don't disable code signing: archive needs real codesign to produce
+          # a valid archive that contains all module maps. A free ad-hoc signing
+          # identity is fine here — we'll unsign the .app before wrapping.
           xcodebuild archive \
-            -project ios/HabitOKR.xcodeproj \
+            -workspace ios/HabitOKR.xcworkspace \
             -scheme "$SCHEME" \
             -configuration "$CONFIG" \
             -archivePath "$ARCHIVE_PATH" \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO
+            -destination 'generic/platform=iOS'
 
+          # Find the .app inside the archive
           cp -R "$ARCHIVE_PATH/Products/Applications/$SCHEME.app" "$APP_PATH"
+
+          # Remove code signature so Sideloadly can re-sign with user's Apple ID
+          codesign --remove-signature "$APP_PATH" || true
+
+          # Wrap into IPA (just a zip with .app inside)
           mkdir -p "$BUILD_DIR/Payload"
           cp -R "$APP_PATH" "$BUILD_DIR/Payload/"
           cd "$BUILD_DIR"
           zip -r -q "$IPA_PATH" Payload
+
+          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
