@@ -1,0 +1,87 @@
+name: Build unsigned IPA (for Sideloadly)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'app.json'
+      - 'package.json'
+      - '.github/workflows/build-ios-unsigned.yml'
+
+concurrency:
+  group: ios-unsigned-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Ruby / Bundler / CocoaPods
+        run: |
+          sudo gem install bundler --no-document
+          brew install cocoapods || gem install cocoapods
+          pod setup --verbose || true
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Prebuild iOS (generate native project)
+        run: npx expo prebuild --platform ios --clean
+
+      - name: Install Pods
+        run: cd ios && pod install --repo-update
+
+      - name: Build unsigned IPA
+        run: |
+          set -e
+          SCHEME="HabitOKR"
+          CONFIG="Release"
+          BUILD_DIR="$PWD/build"
+          ARCHIVE_PATH="$BUILD_DIR/HabitOKR.xcarchive"
+          IPA_PATH="$BUILD_DIR/HabitOKR.ipa"
+          APP_PATH="$BUILD_DIR/HabitOKR.app"
+
+          mkdir -p "$BUILD_DIR"
+
+          # Archive with code signing DISABLED — produces unsigned app bundle
+          xcodebuild archive \
+            -project ios/HabitOKR.xcodeproj \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIG" \
+            -archivePath "$ARCHIVE_PATH" \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            | xcpretty || exit 1
+
+          # Find the .app inside the archive
+          cp -R "$ARCHIVE_PATH/Products/Applications/$SCHEME.app" "$APP_PATH"
+
+          # Wrap into IPA (just a zip with .app inside)
+          mkdir -p "$BUILD_DIR/Payload"
+          cp -R "$APP_PATH" "$BUILD_DIR/Payload/"
+          cd "$BUILD_DIR"
+          zip -r -q "$IPA_PATH" Payload
+
+          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: habitokr-unsigned-ipa
+          path: build/HabitOKR.ipa
+          if-no-files-found: error
+          retention-days: 30
