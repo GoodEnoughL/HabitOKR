@@ -23,6 +23,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node (for Expo scripts)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -42,6 +47,29 @@ jobs:
       - name: Install Pods
         run: cd ios && pod install --repo-update
 
+      # CI 加固 1：把 EXConstants 的 manifest 脚本替换成空操作
+      # 它只生成预编译 Constants.manifest，对自用 IPA 非必需
+      - name: Neutralize EXConstants manifest script (CI only)
+        run: |
+          set -e
+          found=0
+          for f in $(find ios/Pods -name "*.sh" -path "*EXConstants*" 2>/dev/null); do
+            echo "=== Neutralizing $f ==="
+            printf '#!/bin/sh\nexit 0\n' > "$f"
+            found=1
+          done
+          if [ "$found" = "0" ]; then
+            echo "WARN: no EXConstants script found, skipping"
+          fi
+
+      # CI 加固 2：确保 node/npx 在 PATH，供 Bundle RN code 脚本使用
+      - name: Verify node/npx availability
+        run: |
+          which node || echo "node not found"
+          which npx || echo "npx not found"
+          node -v || true
+          npx --version || true
+
       - name: Build unsigned IPA (archive + strip)
         run: |
           set -e
@@ -55,6 +83,10 @@ jobs:
           rm -rf "$BUILD_DIR"
           mkdir -p "$BUILD_DIR"
 
+          # 把 node/npx 路径显式传给 xcodebuild，避免脚本找不到
+          export NODE_BINARY="$(which node)"
+          export PATH="$(dirname "$NODE_BINARY"):$PATH"
+
           xcodebuild archive \
             -workspace ios/HabitOKR.xcworkspace \
             -scheme "$SCHEME" \
@@ -67,7 +99,8 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
             CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM=""
+            DEVELOPMENT_TEAM="" \
+            2>&1 | tee "$BUILD_DIR/xcodebuild.log"
 
           echo "=== Archive OK, extracting .app ==="
           ls -la "$ARCHIVE_PATH/Products/Applications/"
@@ -84,7 +117,18 @@ jobs:
           zip -r -q "$IPA_PATH" Payload
           ls -lh "$IPA_PATH"
 
+      # CI 加固 3：失败时把 xcodebuild 日志作为 artifact 上传，方便定位
+      - name: Upload xcodebuild log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload unsigned IPA
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: habitokr-unsigned-ipa
