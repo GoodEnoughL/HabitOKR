@@ -30,16 +30,25 @@ jobs:
           echo "=== Disk before cleanup ==="
           df -h / | grep -E "(Filesystem|/dev/disk)"
           echo ""
-          # Remove simulator runtimes (~20-40GB on the runner, we never use them)
-          sudo rm -rf /Library/Developer/CoreSimulator || true
-          sudo rm -rf ~/Library/Developer/CoreSimulator || true
-          # Xcode caches
+          # SAFE cleanup — ONLY remove caches and DerivedData, never touch
+          # CoreSimulator or Xcode platforms (they contain iphoneos device SDKs
+          # that xcodebuild archive needs to find valid destinations).
           sudo rm -rf ~/Library/Developer/Xcode/DerivedData || true
           sudo rm -rf ~/Library/Developer/Xcode/Archives || true
           sudo rm -rf ~/Library/Caches/com.apple.dt.Xcode || true
+          sudo rm -rf ~/Library/Caches/org.cocoapods.CocoaPods || true
           brew cleanup --prune=all || true
           echo "=== Disk after cleanup ==="
           df -h / | grep -E "(Filesystem|/dev/disk)"
+
+      - name: Install iOS device platform
+        run: |
+          # Ensure the iPhoneOS platform SDK is present so xcodebuild archive
+          # can find a valid destination for the device build.
+          # If already installed this is a no-op.
+          xcodebuild -downloadPlatform iOS 2>&1 || true
+          echo "=== Platforms available ==="
+          ls /Applications/Xcode_*/Contents/Developer/Platforms/ 2>/dev/null || echo "Xcode not found at default path"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
