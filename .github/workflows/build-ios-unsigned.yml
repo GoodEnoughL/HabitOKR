@@ -81,11 +81,13 @@ jobs:
           # targets and causes silent exit 65 during archive install phase.
           # The runner always has a working ad-hoc signing identity available,
           # so we let Xcode sign everything normally and strip it all later.
+          # Archive for all iOS devices (default behavior — no destination needed).
+          # macos-15's Xcode 16.4 may not have iOS 18.5 device runtime downloaded,
+          # so avoid -destination flags that explicitly require it.
           xcodebuild archive \
             -workspace ios/HabitOKR.xcworkspace \
             -scheme "$SCHEME" \
             -configuration Release \
-            -destination 'generic/platform=iOS' \
             -archivePath "$ARCHIVE_PATH" \
             | tee "$ROOT/xcodebuild.log"
           XCODE_EXIT=${PIPESTATUS[0]}
