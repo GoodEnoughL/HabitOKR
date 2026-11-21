@@ -1,0 +1,165 @@
+workflows:
+  ios-unsigned-ipa:
+    name: Build unsigned IPA (for Sideloadly)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      node: 20
+      xcode: 16.4
+      cocoapods: default
+      vars:
+        SCHEME: "HabitOKR"
+        CONFIG: "Release"
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+    scripts:
+      - name: Setup Bun
+        script: |
+          set -e
+          curl -fsSL https://bun.sh/install | bash
+          export BUN_INSTALL="$HOME/.bun"
+          export PATH="$BUN_INSTALL/bin:$PATH"
+          bun --version
+
+      - name: Install dependencies
+        script: |
+          set -e
+          export BUN_INSTALL="$HOME/.bun"
+          export PATH="$BUN_INSTALL/bin:$PATH"
+          bun install --frozen-lockfile
+
+      - name: Prebuild iOS
+        script: |
+          set -e
+          npx expo prebuild --platform ios --clean
+
+      - name: Install Pods
+        script: |
+          set -e
+          cd ios
+          pod install --repo-update
+          cd ..
+
+      - name: Debug ExpoModulesJSI script
+        script: |
+          set -e
+          echo "=== Listing ExpoModulesJSI target support files ==="
+          ls -la "ios/Pods/Target Support Files/ExpoModulesJSI/" || true
+          echo ""
+          echo "=== Contents of all .sh files under Target Support Files/ExpoModulesJSI ==="
+          for f in "ios/Pods/Target Support Files/ExpoModulesJSI/"*.sh; do
+            if [ -f "$f" ]; then
+              echo "----- $f -----"
+              cat "$f"
+              echo "----- end $f -----"
+            fi
+          done
+          echo ""
+          echo "=== node_modules expo-modules-jsi .sh files ==="
+          find node_modules/expo-modules-jsi -name "*.sh" -exec echo "----- {} -----" \; -exec cat {} \; 2>/dev/null || true
+
+      - name: Free disk space before build
+        script: |
+          set -e
+          echo "=== Disk before cleanup ==="
+          df -h
+          rm -rf ~/Library/Developer/Xcode/DerivedData
+          rm -rf ~/Library/Caches/org.swift.swiftpm
+          rm -rf ~/Library/Caches/Homebrew
+          rm -rf ~/Library/Caches/CocoaPods
+          xcrun simctl delete unavailable 2>/dev/null || true
+          echo "=== Disk after cleanup ==="
+          df -h
+
+      - name: Build unsigned IPA
+        script: |
+          set -e
+          ROOT="$CM_BUILD_DIR"
+          BUILD_DIR="$ROOT/build"
+          DERIVED="$ROOT/DerivedData"
+          LOG="$BUILD_DIR/xcodebuild.log"
+          IPA_PATH="$BUILD_DIR/$SCHEME.ipa"
+
+          rm -rf "$BUILD_DIR" "$DERIVED"
+          mkdir -p "$BUILD_DIR"
+
+          export NODE_BINARY="$(which node)"
+          export PATH="$(dirname "$NODE_BINARY"):$PATH"
+
+          echo "=== Disk before build ==="
+          df -h
+          echo "=== Memory before build ==="
+          vm_stat || true
+
+          set +e
+          xcodebuild build \
+            -workspace ios/HabitOKR.xcworkspace \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIG" \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED" \
+            -jobs 4 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            > "$LOG" 2>&1
+          XCODE_EXIT=$?
+          set -e
+
+          if [ $XCODE_EXIT -ne 0 ]; then
+            echo "=========================================="
+            echo "=== xcodebuild FAILED ==="
+            echo "XCODE_EXIT=$XCODE_EXIT"
+            case $XCODE_EXIT in
+              137) echo "=> 137 = SIGKILL (likely OOM / out of memory)" ;;
+              134) echo "=> 134 = SIGABRT (crash)" ;;
+              143) echo "=> 143 = SIGTERM (likely timeout or cancel)" ;;
+              65)  echo "=> 65  = normal xcodebuild build failure (see error below)" ;;
+              *)   echo "=> $XCODE_EXIT = other exit code" ;;
+            esac
+            echo "=========================================="
+            echo "=== ERROR MARKERS ==="
+            grep -n -E "error:|Command PhaseScriptExecution failed|BUILD FAILED|The following build commands failed|requires a development team|No space left|Operation not permitted|sandbox|Killed|Signal|segmentation fault|exit code" "$LOG" | tail -150 || true
+            echo "=== LAST 250 LINES ==="
+            tail -250 "$LOG"
+            echo "=== Disk after failed build ==="
+            df -h
+            echo "=== DerivedData size ==="
+            du -sh "$DERIVED" 2>/dev/null || true
+            echo "=== Memory after failed build ==="
+            vm_stat || true
+            exit $XCODE_EXIT
+          fi
+
+          echo "=== Build OK, locating .app ==="
+          APP=$(find "$DERIVED/Build/Products/Release-iphoneos" -maxdepth 1 -name "*.app" -type d | head -1)
+          if [ -z "$APP" ]; then
+            echo "ERROR: .app not found under DerivedData"
+            find "$DERIVED/Build/Products" -maxdepth 3 -type d | head -80 || true
+            exit 1
+          fi
+          echo "Found app: $APP"
+
+          APP_PATH="$BUILD_DIR/$SCHEME.app"
+          cp -R "$APP" "$APP_PATH"
+
+          codesign --remove-signature "$APP_PATH" || true
+          xattr -cr "$APP_PATH" || true
+
+          mkdir -p "$BUILD_DIR/Payload"
+          cp -R "$APP_PATH" "$BUILD_DIR/Payload/"
+          cd "$BUILD_DIR"
+          zip -r -q "$IPA_PATH" Payload
+          ls -lh "$IPA_PATH"
+
+    artifacts:
+      - build/HabitOKR.ipa
+      - build/xcodebuild.log
