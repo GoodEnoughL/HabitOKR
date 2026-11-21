@@ -69,6 +69,33 @@ jobs:
       - name: Install Pods
         run: cd ios && pod install --repo-update
 
+      - name: Patch main target to skip signing
+        run: |
+          # Precisely patch ONLY the HabitOKR main target's buildSettings to
+          # skip signing. We MUST NOT pass CODE_SIGNING_ALLOWED=NO globally
+          # because Pods script phases (ExpoModulesJSI, etc.) internally need
+          # signing for their embedded xcframeworks. Using the xcodeproj gem
+          # gives us surgical control over just the main target.
+          gem install xcodeproj --no-document
+          ruby -e '
+            require "xcodeproj"
+            proj = Xcodeproj::Project.open("ios/HabitOKR.xcodeproj")
+            target = proj.targets.find { |t| t.name == "HabitOKR" }
+            raise "HabitOKR target not found" unless target
+            target.build_configurations.each do |config|
+              config.build_settings["CODE_SIGNING_ALLOWED"] = "NO"
+              config.build_settings["CODE_SIGNING_REQUIRED"] = "NO"
+              config.build_settings["CODE_SIGN_IDENTITY"] = ""
+              config.build_settings["DEVELOPMENT_TEAM"] = "XXXXXXXXXX"
+              config.build_settings["PROVISIONING_PROFILE_SPECIFIER"] = ""
+              config.build_settings["CODE_SIGN_STYLE"] = "Manual"
+            end
+            proj.save
+            puts "Patched HabitOKR target: signing disabled"
+          '
+          echo "=== Verifying main target buildSettings ==="
+          grep -A 2 "CODE_SIGNING_ALLOWED" ios/HabitOKR.xcodeproj/project.pbxproj | head -20
+
       - name: Build + archive (let runner sign normally, strip later)
         run: |
           set -e
@@ -84,15 +111,10 @@ jobs:
           echo "=== Disk before archive ==="
           df -h / | grep -E "(Filesystem|/dev/disk)"
 
-          # NORMAL archive — no NO-SIGN flags.
-          # Why: Pods script phases (e.g. ExpoModulesJSI embedding xcframeworks)
-          # internally need signing. Any CODE_SIGNING_ALLOWED=NO leaks into Pods
-          # targets and causes silent exit 65 during archive install phase.
-          # The runner always has a working ad-hoc signing identity available,
-          # so we let Xcode sign everything normally and strip it all later.
-          # Archive for all iOS devices (default behavior — no destination needed).
-          # macos-15's Xcode 16.4 may not have iOS 18.5 device runtime downloaded,
-          # so avoid -destination flags that explicitly require it.
+          # No global signing flags — main target's buildSettings were patched
+          # above (CODE_SIGNING_ALLOWED=NO, etc.) so it skips signing, while Pods
+          # targets keep their default signing behavior (their script phases
+          # need signing for embedded xcframeworks).
           xcodebuild archive \
             -workspace ios/HabitOKR.xcworkspace \
             -scheme "$SCHEME" \
