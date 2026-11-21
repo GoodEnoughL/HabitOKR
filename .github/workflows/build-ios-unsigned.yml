@@ -17,33 +17,53 @@ concurrency:
 
 jobs:
   build:
+    # macos-15 = Xcode 16 (stable, compatible with Expo SDK 58 / RN 0.88)
     runs-on: macos-15
-    timeout-minutes: 60
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+      - name: Free up runner disk space
+        run: |
+          set -e
+          echo "=== Disk before cleanup ==="
+          df -h / | grep -E "(Filesystem|/dev/disk)"
+          echo ""
+          echo "=== Cleaning Xcode simulators, caches, and pre-existing DerivedData ==="
+          # Remove simulator runtimes (these take ~20-40GB on the runner and
+          # we never use them — we build for device, not simulator)
+          sudo rm -rf /Library/Developer/CoreSimulator/Volumes || true
+          sudo rm -rf /Library/Developer/CoreSimulator/Devices || true
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles || true
+          sudo rm -rf ~/Library/Developer/CoreSimulator || true
+
+          # Xcode caches
+          sudo rm -rf ~/Library/Developer/Xcode/DerivedData || true
+          sudo rm -rf ~/Library/Developer/Xcode/Archives || true
+          sudo rm -rf ~/Library/Developer/Xcode/iOS\ DeviceSupport || true
+          sudo rm -rf ~/Library/Caches/com.apple.dt.Xcode || true
+
+          # Xcode Swift module caches
+          sudo rm -rf ~/Library/Developer/XCPGDevices || true
+          sudo rm -rf ~/Library/Developer/XCPGServices || true
+
+          # Homebrew caches (reclaim a couple GB)
+          brew cleanup --prune=all || true
+
+          echo ""
+          echo "=== Disk after cleanup ==="
+          df -h / | grep -E "(Filesystem|/dev/disk)"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Setup Ruby / CocoaPods (conditional)
+      - name: Setup Ruby / Bundler / CocoaPods
         run: |
-          set -e
-          ruby --version || true
-          pod --version || true
-          if ! command -v pod >/dev/null 2>&1 || ! pod --version | grep -qE '^1\.(1[5-9]|[2-9])'; then
-            sudo gem install bundler --no-document || true
-            brew install cocoapods || gem install cocoapods
-          fi
-          pod --version
+          sudo gem install bundler --no-document
+          brew install cocoapods || gem install cocoapods
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -54,99 +74,55 @@ jobs:
       - name: Install Pods
         run: cd ios && pod install --repo-update
 
-      - name: Free disk space before build
+      - name: Ensure Pods xcconfig doesn't force DEVELOPMENT_TEAM
         run: |
-          df -h
-          rm -rf ~/Library/Developer/Xcode/DerivedData
-          rm -rf ~/Library/Caches/org.swift.swiftpm
-          rm -rf ~/Library/Caches/Homebrew
-          rm -rf ~/Library/Caches/CocoaPods
-          xcrun simctl delete unavailable 2>/dev/null || true
-          df -h
+          for f in ios/Pods/Target\ Support\ Files/Pods-HabitOKR/*.xcconfig; do
+            sed -i '' 's/DEVELOPMENT_TEAM = .*/DEVELOPMENT_TEAM = "";/g' "$f"
+          done
 
-      - name: Build unsigned IPA
+      - name: Build unsigned IPA (archive + strip)
         run: |
           set -e
           SCHEME="HabitOKR"
           CONFIG="Release"
           ROOT="$PWD"
           BUILD_DIR="$ROOT/build"
-          DERIVED="$ROOT/DerivedData"
-          LOG="$BUILD_DIR/xcodebuild.log"
-          IPA_PATH="$BUILD_DIR/$SCHEME.ipa"
+          ARCHIVE_PATH="$BUILD_DIR/HabitOKR.xcarchive"
+          IPA_PATH="$BUILD_DIR/HabitOKR.ipa"
 
-          rm -rf "$BUILD_DIR" "$DERIVED"
+          rm -rf "$BUILD_DIR"
           mkdir -p "$BUILD_DIR"
 
-          export NODE_BINARY="$(which node)"
-          export PATH="$(dirname "$NODE_BINARY"):$PATH"
+          echo "=== Disk before archive ==="
+          df -h / | grep -E "(Filesystem|/dev/disk)"
 
-          echo "=== Neutralize ExpoModulesJSI in Target Support Files ==="
-          for f in "ios/Pods/Target Support Files/ExpoModulesJSI/"*.sh; do
-            if [ -f "$f" ]; then
-              echo "Neutralizing $f"
-              cp "$f" "$f.orig" 2>/dev/null || true
-              printf '#!/bin/sh\nexit 0\n' > "$f"
-              chmod +x "$f"
-            fi
-          done
-
-          echo "=== Confirm content ==="
-          cat "ios/Pods/Target Support Files/ExpoModulesJSI/"*.sh 2>/dev/null || true
-
-          echo "=== Disk before build ==="
-          df -h
-          echo "=== Memory before build ==="
-          vm_stat || true
-
-          set +e
-          xcodebuild build \
+          # Use archive with official NO-SIGN flags. We let xcodebuild archive
+          # with the signing flags to skip code signing; Pods scripts are not
+          # affected because we don't CODE_SIGNING_ALLOWED on those targets.
+          xcodebuild archive \
             -workspace ios/HabitOKR.xcworkspace \
             -scheme "$SCHEME" \
             -configuration "$CONFIG" \
-            -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath "$DERIVED" \
-            -jobs 4 \
+            -archivePath "$ARCHIVE_PATH" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
             CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM="" \
-            > "$LOG" 2>&1
-          XCODE_EXIT=$?
-          set -e
+            DEVELOPMENT_TEAM=""
 
-          if [ $XCODE_EXIT -ne 0 ]; then
-            echo "=== xcodebuild FAILED, XCODE_EXIT=$XCODE_EXIT ==="
-            echo "=== ERROR MARKERS ==="
-            grep -n -E "error:|Could not resolve package dependencies|Command PhaseScriptExecution failed|BUILD FAILED|The following build commands failed|requires a development team|No space left|Operation not permitted|sandbox|Killed|Signal|segmentation fault|exit code" "$LOG" | tail -150 || true
-            echo "=== LAST 250 LINES ==="
-            tail -250 "$LOG"
-            echo "=== Disk after failed build ==="
-            df -h
-            echo "=== DerivedData size ==="
-            du -sh "$DERIVED" 2>/dev/null || true
-            echo "=== ExpoModulesJSI scripts under DerivedData (if any) ==="
-            find "$DERIVED" -name "*ExpoModulesJSI*.sh" 2>/dev/null | head -20 || true
-            exit $XCODE_EXIT
-          fi
+          echo "=== Archive OK ==="
+          ls -la "$ARCHIVE_PATH/Products/Applications/"
 
-          echo "=== Build OK, locating .app ==="
-          APP=$(find "$DERIVED/Build/Products/Release-iphoneos" -maxdepth 1 -name "*.app" -type d | head -1)
-          if [ -z "$APP" ]; then
-            echo "ERROR: .app not found"
-            find "$DERIVED/Build/Products" -maxdepth 3 -type d | head -80 || true
-            exit 1
-          fi
-          echo "Found app: $APP"
+          APP_PATH="$BUILD_DIR/HabitOKR.app"
+          cp -R "$ARCHIVE_PATH/Products/Applications/$SCHEME.app" "$APP_PATH"
 
-          APP_PATH="$BUILD_DIR/$SCHEME.app"
-          cp -R "$APP" "$APP_PATH"
+          # Strip signatures + extended attributes for Sideloadly
           codesign --remove-signature "$APP_PATH" || true
           xattr -cr "$APP_PATH" || true
 
+          # Wrap into IPA
           mkdir -p "$BUILD_DIR/Payload"
           cp -R "$APP_PATH" "$BUILD_DIR/Payload/"
           cd "$BUILD_DIR"
@@ -154,19 +130,9 @@ jobs:
           ls -lh "$IPA_PATH"
 
       - name: Upload unsigned IPA
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: habitokr-unsigned-ipa
           path: build/HabitOKR.ipa
           if-no-files-found: error
           retention-days: 30
-
-      - name: Upload xcodebuild log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: xcodebuild-log
-          path: build/xcodebuild.log
-          if-no-files-found: ignore
-          retention-days: 7
