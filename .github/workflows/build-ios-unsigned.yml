@@ -59,6 +59,27 @@ jobs:
       - name: Install Pods
         run: cd ios && pod install --repo-update
 
+      - name: Debug ExpoModulesJSI script
+        run: |
+          set -e
+          echo "=== Listing ExpoModulesJSI target support files ==="
+          ls -la "ios/Pods/Target Support Files/ExpoModulesJSI/" || true
+          echo ""
+          echo "=== Contents of all .sh files under Target Support Files/ExpoModulesJSI ==="
+          for f in "ios/Pods/Target Support Files/ExpoModulesJSI/"*.sh; do
+            if [ -f "$f" ]; then
+              echo "----- $f -----"
+              cat "$f"
+              echo "----- end $f -----"
+            fi
+          done
+          echo ""
+          echo "=== Also list ExpoModulesJSI pod directory ==="
+          ls -la "ios/Pods/ExpoModulesJSI/" 2>/dev/null || true
+          echo ""
+          echo "=== node_modules expo-modules-jsi .sh files ==="
+          find node_modules/expo-modules-jsi -name "*.sh" -exec echo "----- {} -----" \; -exec cat {} \; 2>/dev/null || true
+
       - name: Free disk space before build
         run: |
           echo "=== Disk before cleanup ==="
