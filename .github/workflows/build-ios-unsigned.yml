@@ -47,12 +47,38 @@ jobs:
       - name: Install Pods
         run: cd ios && pod install --repo-update
 
+      - name: Patch ExpoModulesJSI script for CI sandbox (if present)
+        run: |
+          set -e
+          echo "=== Looking for expo-modules-jsi build script ==="
+          SCRIPTS=$(find node_modules/expo-modules-jsi -name "*.sh" 2>/dev/null || true)
+          if [ -z "$SCRIPTS" ]; then
+            echo "WARN: no .sh under node_modules/expo-modules-jsi"
+            find node_modules/expo-modules-jsi -maxdepth 4 -type f 2>/dev/null | head -50 || true
+            exit 0
+          fi
+          echo "$SCRIPTS"
+          for f in $SCRIPTS; do
+            if grep -q "xcodebuild" "$f" 2>/dev/null; then
+              echo "=== Patching $f ==="
+              cp "$f" "$f.bak"
+              # 在 xcodebuild 命令后追加禁用沙盒参数（如果还没有）
+              sed -i '' 's/xcodebuild build /xcodebuild build -IDEPackageSupportDisableManifestSandbox=YES -IDEPackageSupportDisablePluginExecutionSandbox=YES /g' "$f"
+              echo "--- after patch (xcodebuild lines) ---"
+              grep -n "xcodebuild" "$f" || true
+            fi
+          done
+
       - name: Free disk space before build
         run: |
+          echo "=== Disk before cleanup ==="
           df -h
           rm -rf ~/Library/Developer/Xcode/DerivedData
           rm -rf ~/Library/Caches/org.swift.swiftpm
+          rm -rf ~/Library/Caches/Homebrew
+          rm -rf ~/Library/Caches/CocoaPods
           xcrun simctl delete unavailable 2>/dev/null || true
+          echo "=== Disk after cleanup ==="
           df -h
 
       - name: Build unsigned IPA
@@ -96,9 +122,9 @@ jobs:
           if [ $XCODE_EXIT -ne 0 ]; then
             echo "=== xcodebuild failed with exit $XCODE_EXIT ==="
             echo "=== ERROR MARKERS ==="
-            grep -n -E "error:|Command PhaseScriptExecution failed|BUILD FAILED|The following build commands failed|requires a development team|No space left" "$LOG" | tail -100 || true
-            echo "=== LAST 200 LINES ==="
-            tail -200 "$LOG"
+            grep -n -E "error:|Command PhaseScriptExecution failed|BUILD FAILED|The following build commands failed|requires a development team|No space left|Operation not permitted|sandbox" "$LOG" | tail -120 || true
+            echo "=== LAST 250 LINES ==="
+            tail -250 "$LOG"
             echo "=== Disk after failed build ==="
             df -h
             du -sh "$DERIVED" 2>/dev/null || true
@@ -109,7 +135,7 @@ jobs:
           APP=$(find "$DERIVED/Build/Products/Release-iphoneos" -maxdepth 1 -name "*.app" -type d | head -1)
           if [ -z "$APP" ]; then
             echo "ERROR: .app not found under DerivedData"
-            find "$DERIVED/Build/Products" -maxdepth 3 -type d | head -50 || true
+            find "$DERIVED/Build/Products" -maxdepth 3 -type d | head -80 || true
             exit 1
           fi
           echo "Found app: $APP"
