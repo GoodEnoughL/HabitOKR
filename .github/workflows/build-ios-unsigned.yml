@@ -30,28 +30,14 @@ jobs:
           echo "=== Disk before cleanup ==="
           df -h / | grep -E "(Filesystem|/dev/disk)"
           echo ""
-          echo "=== Cleaning Xcode simulators, caches, and pre-existing DerivedData ==="
-          # Remove simulator runtimes (these take ~20-40GB on the runner and
-          # we never use them — we build for device, not simulator)
-          sudo rm -rf /Library/Developer/CoreSimulator/Volumes || true
-          sudo rm -rf /Library/Developer/CoreSimulator/Devices || true
-          sudo rm -rf /Library/Developer/CoreSimulator/Profiles || true
+          # Remove simulator runtimes (~20-40GB on the runner, we never use them)
+          sudo rm -rf /Library/Developer/CoreSimulator || true
           sudo rm -rf ~/Library/Developer/CoreSimulator || true
-
           # Xcode caches
           sudo rm -rf ~/Library/Developer/Xcode/DerivedData || true
           sudo rm -rf ~/Library/Developer/Xcode/Archives || true
-          sudo rm -rf ~/Library/Developer/Xcode/iOS\ DeviceSupport || true
           sudo rm -rf ~/Library/Caches/com.apple.dt.Xcode || true
-
-          # Xcode Swift module caches
-          sudo rm -rf ~/Library/Developer/XCPGDevices || true
-          sudo rm -rf ~/Library/Developer/XCPGServices || true
-
-          # Homebrew caches (reclaim a couple GB)
           brew cleanup --prune=all || true
-
-          echo ""
           echo "=== Disk after cleanup ==="
           df -h / | grep -E "(Filesystem|/dev/disk)"
 
@@ -74,17 +60,10 @@ jobs:
       - name: Install Pods
         run: cd ios && pod install --repo-update
 
-      - name: Ensure Pods xcconfig doesn't force DEVELOPMENT_TEAM
-        run: |
-          for f in ios/Pods/Target\ Support\ Files/Pods-HabitOKR/*.xcconfig; do
-            sed -i '' 's/DEVELOPMENT_TEAM = .*/DEVELOPMENT_TEAM = "";/g' "$f"
-          done
-
-      - name: Build unsigned IPA (archive + strip)
+      - name: Build + archive (let runner sign normally, strip later)
         run: |
           set -e
           SCHEME="HabitOKR"
-          CONFIG="Release"
           ROOT="$PWD"
           BUILD_DIR="$ROOT/build"
           ARCHIVE_PATH="$BUILD_DIR/HabitOKR.xcarchive"
@@ -96,33 +75,50 @@ jobs:
           echo "=== Disk before archive ==="
           df -h / | grep -E "(Filesystem|/dev/disk)"
 
-          # Use archive with official NO-SIGN flags. We let xcodebuild archive
-          # with the signing flags to skip code signing; Pods scripts are not
-          # affected because we don't CODE_SIGNING_ALLOWED on those targets.
+          # NORMAL archive — no NO-SIGN flags.
+          # Why: Pods script phases (e.g. ExpoModulesJSI embedding xcframeworks)
+          # internally need signing. Any CODE_SIGNING_ALLOWED=NO leaks into Pods
+          # targets and causes silent exit 65 during archive install phase.
+          # The runner always has a working ad-hoc signing identity available,
+          # so we let Xcode sign everything normally and strip it all later.
           xcodebuild archive \
             -workspace ios/HabitOKR.xcworkspace \
             -scheme "$SCHEME" \
-            -configuration "$CONFIG" \
+            -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$ARCHIVE_PATH" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM=""
+            | tee "$ROOT/xcodebuild.log"
+          XCODE_EXIT=${PIPESTATUS[0]}
 
+          if [ $XCODE_EXIT -ne 0 ]; then
+            echo ""
+            echo "========== BUILD FAILED (exit $XCODE_EXIT) =========="
+            echo "=== error markers ==="
+            grep -inE "error:|BUILD FAILED|The following build commands failed" "$ROOT/xcodebuild.log" || true
+            echo ""
+            echo "=== last 100 lines ==="
+            tail -100 "$ROOT/xcodebuild.log"
+            exit $XCODE_EXIT
+          fi
+
+          echo ""
           echo "=== Archive OK ==="
           ls -la "$ARCHIVE_PATH/Products/Applications/"
 
+          # Extract the .app bundle
           APP_PATH="$BUILD_DIR/HabitOKR.app"
           cp -R "$ARCHIVE_PATH/Products/Applications/$SCHEME.app" "$APP_PATH"
 
-          # Strip signatures + extended attributes for Sideloadly
+          # Strip ALL signatures and extended attributes so Sideloadly
+          # can re-sign with the user's free Apple ID.
+          echo "=== Stripping signatures ==="
           codesign --remove-signature "$APP_PATH" || true
           xattr -cr "$APP_PATH" || true
 
-          # Wrap into IPA
+          # Verify strip worked
+          codesign --verify --deep --strict "$APP_PATH" 2>&1 || echo "(verify failure expected — unsigned app)"
+
+          # Package into standard IPA (Payload/ zip)
           mkdir -p "$BUILD_DIR/Payload"
           cp -R "$APP_PATH" "$BUILD_DIR/Payload/"
           cd "$BUILD_DIR"
@@ -136,3 +132,11 @@ jobs:
           path: build/HabitOKR.ipa
           if-no-files-found: error
           retention-days: 30
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          retention-days: 7
