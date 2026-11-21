@@ -37,16 +37,11 @@ jobs:
       - name: Setup Ruby / CocoaPods (conditional)
         run: |
           set -e
-          echo "=== Ruby ==="
           ruby --version || true
-          echo "=== Existing pod ==="
           pod --version || true
           if ! command -v pod >/dev/null 2>&1 || ! pod --version | grep -qE '^1\.(1[5-9]|[2-9])'; then
-            echo "CocoaPods missing or too old, installing..."
             sudo gem install bundler --no-document || true
             brew install cocoapods || gem install cocoapods
-          else
-            echo "CocoaPods OK, skipping install"
           fi
           pod --version
 
@@ -59,55 +54,14 @@ jobs:
       - name: Install Pods
         run: cd ios && pod install --repo-update
 
-      - name: Neutralize ExpoModulesJSI xcframework script (CI only)
-        run: |
-          set -e
-          echo "=== BEFORE: ExpoModulesJSI target support files ==="
-          ls -la "ios/Pods/Target Support Files/ExpoModulesJSI/" || true
-          echo ""
-          echo "=== Checking xcframework presence (before neutralize) ==="
-          find ios/Pods -name "ExpoModulesJSI.xcframework" -type d 2>/dev/null || true
-          find node_modules/expo-modules-jsi -name "*.xcframework" -type d 2>/dev/null || true
-          echo ""
-          FOUND=0
-          for f in "ios/Pods/Target Support Files/ExpoModulesJSI/"*.sh; do
-            if [ -f "$f" ]; then
-              echo "=== Neutralizing $f ==="
-              cp "$f" "$f.orig" || true
-              printf '#!/bin/sh\nexit 0\n' > "$f"
-              chmod +x "$f"
-              FOUND=1
-            fi
-          done
-          if [ "$FOUND" = "0" ]; then
-            echo "WARN: no .sh under Target Support Files/ExpoModulesJSI"
-            echo "=== Fallback: list any ExpoModulesJSI .sh under ios/Pods ==="
-            find ios/Pods -path "*ExpoModulesJSI*" -name "*.sh" 2>/dev/null || true
-            echo "=== Fallback: list any .sh under node_modules/expo-modules-jsi ==="
-            find node_modules/expo-modules-jsi -name "*.sh" 2>/dev/null || true
-          fi
-          echo ""
-          echo "=== AFTER: ExpoModulesJSI target support files ==="
-          ls -la "ios/Pods/Target Support Files/ExpoModulesJSI/" || true
-          echo "=== Show neutralized script content ==="
-          for f in "ios/Pods/Target Support Files/ExpoModulesJSI/"*.sh; do
-            if [ -f "$f" ]; then
-              echo "----- $f -----"
-              cat "$f"
-              echo "----- end $f -----"
-            fi
-          done
-
       - name: Free disk space before build
         run: |
-          echo "=== Disk before cleanup ==="
           df -h
           rm -rf ~/Library/Developer/Xcode/DerivedData
           rm -rf ~/Library/Caches/org.swift.swiftpm
           rm -rf ~/Library/Caches/Homebrew
           rm -rf ~/Library/Caches/CocoaPods
           xcrun simctl delete unavailable 2>/dev/null || true
-          echo "=== Disk after cleanup ==="
           df -h
 
       - name: Build unsigned IPA
@@ -126,6 +80,19 @@ jobs:
 
           export NODE_BINARY="$(which node)"
           export PATH="$(dirname "$NODE_BINARY"):$PATH"
+
+          echo "=== Neutralize ExpoModulesJSI in Target Support Files ==="
+          for f in "ios/Pods/Target Support Files/ExpoModulesJSI/"*.sh; do
+            if [ -f "$f" ]; then
+              echo "Neutralizing $f"
+              cp "$f" "$f.orig" 2>/dev/null || true
+              printf '#!/bin/sh\nexit 0\n' > "$f"
+              chmod +x "$f"
+            fi
+          done
+
+          echo "=== Confirm content ==="
+          cat "ios/Pods/Target Support Files/ExpoModulesJSI/"*.sh 2>/dev/null || true
 
           echo "=== Disk before build ==="
           df -h
@@ -152,17 +119,7 @@ jobs:
           set -e
 
           if [ $XCODE_EXIT -ne 0 ]; then
-            echo "=========================================="
-            echo "=== xcodebuild FAILED ==="
-            echo "XCODE_EXIT=$XCODE_EXIT"
-            case $XCODE_EXIT in
-              137) echo "=> 137 = SIGKILL (likely OOM / out of memory)" ;;
-              134) echo "=> 134 = SIGABRT (crash)" ;;
-              143) echo "=> 143 = SIGTERM (likely timeout or cancel)" ;;
-              65)  echo "=> 65  = normal xcodebuild build failure (see error below)" ;;
-              *)   echo "=> $XCODE_EXIT = other exit code" ;;
-            esac
-            echo "=========================================="
+            echo "=== xcodebuild FAILED, XCODE_EXIT=$XCODE_EXIT ==="
             echo "=== ERROR MARKERS ==="
             grep -n -E "error:|Could not resolve package dependencies|Command PhaseScriptExecution failed|BUILD FAILED|The following build commands failed|requires a development team|No space left|Operation not permitted|sandbox|Killed|Signal|segmentation fault|exit code" "$LOG" | tail -150 || true
             echo "=== LAST 250 LINES ==="
@@ -171,19 +128,15 @@ jobs:
             df -h
             echo "=== DerivedData size ==="
             du -sh "$DERIVED" 2>/dev/null || true
-            echo "=== Memory after failed build ==="
-            vm_stat || true
-            echo "=== Crash reports (.ips) ==="
-            ls -lat ~/Library/Logs/DiagnosticReports/ 2>/dev/null | head -20 || true
-            echo "=== Any .ips mentioning xcodebuild/clang/swiftc ==="
-            grep -l -E "xcodebuild|clang|swiftc" ~/Library/Logs/DiagnosticReports/*.ips 2>/dev/null | tail -10 || true
+            echo "=== ExpoModulesJSI scripts under DerivedData (if any) ==="
+            find "$DERIVED" -name "*ExpoModulesJSI*.sh" 2>/dev/null | head -20 || true
             exit $XCODE_EXIT
           fi
 
           echo "=== Build OK, locating .app ==="
           APP=$(find "$DERIVED/Build/Products/Release-iphoneos" -maxdepth 1 -name "*.app" -type d | head -1)
           if [ -z "$APP" ]; then
-            echo "ERROR: .app not found under DerivedData"
+            echo "ERROR: .app not found"
             find "$DERIVED/Build/Products" -maxdepth 3 -type d | head -80 || true
             exit 1
           fi
@@ -191,7 +144,6 @@ jobs:
 
           APP_PATH="$BUILD_DIR/$SCHEME.app"
           cp -R "$APP" "$APP_PATH"
-
           codesign --remove-signature "$APP_PATH" || true
           xattr -cr "$APP_PATH" || true
 
